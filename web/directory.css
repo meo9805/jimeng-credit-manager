@@ -1,0 +1,30 @@
+.directory-grid { display: grid; grid-template-columns: minmax(330px, .85fr) minmax(440px, 1.3fr); align-items: start; gap: 20px; }
+.directory-select { display: block; width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid #dde4f0; border-radius: 7px; background: #fff; color: #465976; font: inherit; }
+.directory-select:focus { outline: 2px solid #8bb4ff; outline-offset: 1px; }
+.directory-select:disabled { opacity: .6; }
+.directory-readonly { display: block; padding: 10px 12px; min-height: 40px; border-radius: 7px; background: #f4f7fc; color: #52647d; font-size: 14px; }
+.configuration-form > .text-button, .owner-form > .text-button { margin-top: 12px; }
+.directory-grid .panel { margin-bottom: 0; }
+.directory-grid .panel-title { flex-wrap: wrap; }
+.directory-grid .filter-bar { flex-wrap: wrap; }
+.directory-grid .filter-bar .search-input { flex: 1; min-width: 140px; width: auto; }
+.directory-grid .filter-bar .select-wrapper select { max-width: 180px; }
+.directory-grid .directory-table { white-space: normal; }
+.directory-grid .directory-table td { height: 64px; overflow-wrap: anywhere; }
+.directory-grid .directory-table th { white-space: nowrap; }
+.directory-grid .directory-table th:last-child { width: 110px; }
+.directory-grid .directory-table td strong { color: #465976; font-weight: 500; }
+.directory-row-actions { display: flex; justify-content: flex-end; align-items: center; gap: 13px; white-space: nowrap; }
+.directory-row-actions .directory-delete { color: #a26660; }
+.directory-row-actions button:disabled { cursor: default; opacity: .5; }
+.directory-form { margin: 0 20px 20px; padding: 17px; background: #f8faff; border: 1px solid #e5ebf5; border-radius: 8px; }
+.directory-form h3 { margin: 0 0 15px; font-size: 13px; font-weight: 600; color: #465976; }
+.directory-form label { display: flex; flex-direction: column; min-width: 0; gap: 8px; font-size: 13px; color: #657791; }
+.directory-form-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.directory-form .select-wrapper select { max-width: none; width: 100%; height: 32px; font-size: 13px; color: #52647d; }
+.directory-form .form-actions { margin-top: 16px; padding-top: 14px; }
+.directory-delete-confirm { margin: 0 20px 16px; padding: 12px 14px; border: 1px solid #eddbd8; border-radius: 7px; background: #fff9f8; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; color: #955951; }
+.directory-delete-confirm > span { overflow-wrap: anywhere; min-width: 0; }
+.directory-delete-confirm > div { display: flex; gap: 8px; }
+@media (max-width: 1180px) { .directory-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .directory-form { margin-left: 16px; margin-right: 16px; padding: 14px; } .directory-form-fields { grid-template-columns: 1fr; } .directory-grid .filter-bar .search-input { flex-basis: 100%; } .directory-grid .filter-bar .select-wrapper select { max-width: none; } .directory-delete-confirm { margin-left: 16px; margin-right: 16px; } }

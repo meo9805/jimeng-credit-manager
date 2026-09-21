@@ -1,0 +1,11 @@
+.creator-platform-name {
+  display: block;
+  margin-top: 4px;
+  color: #7e90aa;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.identity-sources { display: flex; flex-wrap: wrap; gap: 5px; max-width: 240px; }
+.identity-sources > span { padding: 3px 7px; border-radius: 5px; background: #f2f5fa; color: #7588a2; font-size: 12px; white-space: nowrap; }

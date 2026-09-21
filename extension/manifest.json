@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "即梦积分管家",
+  "description": "自动同步即梦会员、团队创建者与成员额度、积分及使用记录，供管理者统一查看。",
+  "version": "0.2.9",
+  "icons": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png"},
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms", "scripting"],
+  "host_permissions": ["https://jimeng.jianying.com/*", "http://127.0.0.1/*"],
+  "background": {"service_worker": "background.mjs", "type": "module"},
+  "content_scripts": [{"matches":["https://jimeng.jianying.com/*"],"js":["content-bridge.js"],"run_at":"document_start"}],
+  "action": {"default_popup": "popup.html", "default_title": "即梦积分管家", "default_icon": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png"}}
+}

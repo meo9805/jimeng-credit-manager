@@ -1,0 +1,11 @@
+.brand .brand-mark { background: transparent; border: 0; border-radius: 0; object-fit: contain; }
+.theme-toggle { --theme-switch-bg: #edf1f7; --theme-switch-active: #fff; --theme-switch-text: #596d8a; --theme-switch-selected: #355db5; display: inline-grid; grid-template-columns: repeat(2, 1fr); position: relative; gap: 0; flex: none; padding: 3px; border: 1px solid #dde4ee; border-radius: 8px; background: var(--theme-switch-bg); }
+.theme-toggle-indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 5px; background: var(--theme-switch-active); box-shadow: 0 1px 3px #192c491a; transition: transform 160ms ease; pointer-events: none; }
+.theme-toggle button { position: relative; display: inline-flex; justify-content: center; align-items: center; gap: 5px; min-width: 58px; height: 27px; border: 0; border-radius: 5px; padding: 0 9px; background: transparent; color: var(--theme-switch-text); font-size: 12px; }
+.theme-toggle button.active { color: var(--theme-switch-selected); font-weight: 600; }
+.theme-toggle button:hover { color: var(--theme-switch-selected); }
+.theme-toggle button:focus-visible { outline: 2px solid #729ce8; outline-offset: 1px; }
+.login-theme { position: absolute; right: 36px; top: 31px; }
+html[data-theme="dark"] .theme-toggle { --theme-switch-bg: #182231; --theme-switch-active: #2a3b54; --theme-switch-text: #a8b7cd; --theme-switch-selected: #d8e7ff; border-color: #3a4a62; }
+@media (max-width: 560px) { .theme-toggle button { min-width: 48px; padding: 0 6px; height: 26px; } .theme-toggle { padding: 2px; } .theme-toggle-indicator { top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / 2); } .login-top { left: 19px; } .login-top .brand { gap: 7px; } .login-top .brand strong { font-size: 12px; } .login-top .brand-mark { width: 28px; height: 28px; } .login-theme { right: 19px; top: 25px; } }
+@media (prefers-reduced-motion: reduce) { .theme-toggle-indicator { transition: none; } }

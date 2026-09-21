@@ -1,0 +1,319 @@
+/* Theme-only overrides. Light mode continues to use the existing styles. */
+html[data-theme="dark"],
+html[data-theme="dark"] body[theme-mode="dark"] {
+  --ink: #e4ebf5;
+  --muted: #a1afc3;
+  --blue: #a5c1ff;
+  --blue-dark: #c3d5ff;
+  --line: #2c3a4d;
+  --paper: #17212f;
+  --wash: #101722;
+  --theme-surface: #17212f;
+  --theme-raised: #1d2939;
+  --theme-inset: #141d2a;
+  --theme-hover: #24334a;
+  --theme-active: #263d62;
+  --theme-border: #354459;
+  --theme-text: #e4ebf5;
+  --theme-secondary: #bdcadd;
+  --theme-muted: #a1afc3;
+  --theme-disabled: #8090a5;
+  --theme-accent: #a5c1ff;
+  --theme-focus: #82a9ff;
+  --theme-accent-surface: #1d304e;
+  --theme-accent-border: #3d5881;
+  --theme-success: #8bd6b5;
+  --theme-success-surface: #19382e;
+  --theme-success-border: #37634f;
+  --theme-warning: #eac183;
+  --theme-warning-surface: #3a3021;
+  --theme-warning-border: #715936;
+  --theme-danger: #ffb1a3;
+  --theme-danger-surface: #3d272b;
+  --theme-danger-border: #79464c;
+  --theme-shadow: 0 12px 40px #00000040;
+  --semi-color-primary: #4772cd;
+  --semi-color-primary-hover: #5984df;
+  --semi-color-primary-active: #3b63b8;
+  --semi-color-primary-disabled: #344b73;
+  --semi-color-primary-light-default: var(--theme-accent-surface);
+  --semi-color-primary-light-hover: var(--theme-active);
+  --semi-color-primary-light-active: #304b74;
+  --semi-color-secondary: var(--theme-secondary);
+  --semi-color-tertiary: var(--theme-secondary);
+  --semi-color-text-0: var(--theme-text);
+  --semi-color-text-1: var(--theme-secondary);
+  --semi-color-text-2: var(--theme-muted);
+  --semi-color-text-3: var(--theme-disabled);
+  --semi-color-border: var(--theme-border);
+  --semi-color-bg-0: var(--wash);
+  --semi-color-bg-1: var(--theme-surface);
+  --semi-color-bg-2: var(--theme-raised);
+  --semi-color-bg-3: #263449;
+  --semi-color-bg-4: #304159;
+  --semi-color-fill-0: #ffffff0b;
+  --semi-color-fill-1: #ffffff14;
+  --semi-color-fill-2: #ffffff20;
+  --semi-color-disabled-bg: #202b3b;
+  --semi-color-disabled-text: var(--theme-disabled);
+  --semi-color-disabled-border: var(--line);
+  --semi-color-focus-border: var(--theme-focus);
+  --semi-color-link: var(--theme-accent);
+  --semi-color-link-hover: #c3d5ff;
+  --semi-color-link-active: #8fb1ff;
+  --semi-color-success: var(--theme-success);
+  --semi-color-success-light-default: var(--theme-success-surface);
+  --semi-color-warning: var(--theme-warning);
+  --semi-color-warning-light-default: var(--theme-warning-surface);
+  --semi-color-danger: var(--theme-danger);
+  --semi-color-danger-light-default: var(--theme-danger-surface);
+  --semi-color-info: var(--theme-accent);
+  --semi-color-info-light-default: var(--theme-accent-surface);
+  --semi-color-overlay-bg: #050a12b8;
+  color: var(--theme-text);
+  background: var(--wash);
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] ::selection { background: #44649b; color: #fff; }
+html[data-theme="dark"] :is(button, a, input, select):focus-visible { outline-color: var(--theme-focus); }
+html[data-theme="dark"] button:active:not(:disabled) { box-shadow: 0 0 0 3px #82a9ff22; }
+
+/* Page chrome and common surfaces. */
+html[data-theme="dark"] :is(.sidebar, .topbar, .login-card, .panel, .stat-card, .skeleton-card, .skeleton-table) {
+  background: var(--theme-surface);
+  border-color: var(--line);
+}
+html[data-theme="dark"] .login-screen { background: var(--wash); }
+html[data-theme="dark"] .login-card { box-shadow: var(--theme-shadow); }
+html[data-theme="dark"] :is(.nav-item, .breadcrumb strong, .help-link, .local-status) { color: var(--theme-secondary); }
+html[data-theme="dark"] .nav-item:hover { background: var(--theme-hover); color: var(--theme-text); }
+html[data-theme="dark"] .nav-item.active { background: var(--theme-accent-surface); color: var(--theme-accent); }
+html[data-theme="dark"] :is(.nav-item small, .admin-avatar, .employee-avatar) { color: var(--theme-secondary); background: var(--theme-hover); }
+html[data-theme="dark"] :is(.icon-button, .row-arrow) { color: var(--theme-muted); }
+html[data-theme="dark"] :is(.icon-button, .row-arrow):hover { color: var(--theme-accent); background: var(--theme-hover); }
+html[data-theme="dark"] :is(.quiet-dot, .status-ok i) { background: var(--theme-success); }
+html[data-theme="dark"] .quiet-dot { box-shadow: 0 0 0 3px var(--theme-success-surface); }
+
+/* Explicit text roles preserve the distinction between content, metadata and state. */
+html[data-theme="dark"] :is(
+  .brand strong, .page-heading h1, .panel-title h2, .panel-title h3,
+  .welcome-copy h2, .login-card h1, .detail-identity h2, .detail-section h3,
+  .help-content h3, .login-account-title > strong, .employee-cell strong,
+  .account-name strong, .owner-first-ledger .employee-primary,
+  .employee-usage-card-heading > strong, .team-overview-title h3,
+  .team-owner-summary > strong, .team-ownership-box strong,
+  .team-members-section h3, .team-members-table td:first-child > strong,
+  .identity-form-platform > strong, .directory-form h3,
+  .directory-grid .directory-table td strong, .diagnostics-heading h2
+) { color: var(--theme-text); }
+
+html[data-theme="dark"] :is(
+  .data-table td, .transaction-kind strong, .transaction-amount,
+  .table-balance, .detail-section dd, .detail-transaction strong,
+  .configuration-form > label, .owner-form label, .role-options strong,
+  .identity-form > label > span, .directory-form label, .empty-state h3,
+  .attention-panel > button, .attention-panel strong, .attention-update,
+  .balance-legends strong, .team-pool-amount > strong, .plan-title,
+  .plan-meta strong, .plan-team-owner strong, .team-card-facts strong,
+  .wallet-counts strong, .identity-owner.mapped, .sync-target strong,
+  .diagnostic-event-heading strong, .install-guide strong, .setup-steps strong
+) { color: var(--theme-secondary); }
+
+html[data-theme="dark"] :is(
+  .brand small, .workspace-label, .breadcrumb span, .breadcrumb svg, .eyebrow,
+  .page-description, .page-heading-actions small, .panel-title p, .panel-title > svg,
+  .stat-label, .stat-card p, .stat-number small, .balance-legends span,
+  .balance-legends small, .balance-legends em, .subtle, .count-caption,
+  .attention-panel small, .attention-panel button > svg, .attention-update small,
+  .welcome-copy p, .setup-steps small, .cell-sub, .data-table th,
+  .account-name small, .table-balance.unknown, .unassigned, .unconfirmed,
+  .transaction-kind small, .table-footer, .empty-state p, .inline-explanation,
+  .install-guide h3, .install-guide span, .deployment-note, .page-footer,
+  .detail-identity p, .detail-balance > strong small, .detail-balance > div > small,
+  .detail-balance > p, .detail-tabs small, .detail-section dt, .detail-note,
+  .detail-transaction p, .detail-transaction small, .form-intro, .form-note,
+  .role-options small, .help-content p, .local-status small, .login-intro,
+  .login-card label, .login-help, .login-foot, .boot, .wallet-counts > span,
+  .wallet-context > p, .login-account-title > small, .login-platform-id,
+  .initial-binding, .collector-enrollment-history, .creator-platform-name,
+  .identity-owner, .identity-department, .identity-form-platform > span,
+  .identity-form-platform > small, .plan-label, .plan-label small, .plan-cycle,
+  .plan-amount > span, .team-pool-amount > span, .plan-amount small,
+  .team-pool-amount small, .allocation-note, .plan-meta span, .plan-meta > p,
+  .plan-foot > span, .unlinked-pools > h3, .unlinked-pools > p,
+  .wallet-relation p, .team-overview-title p, .team-owner-summary > span,
+  .team-inventory span, .team-inventory small, .team-card-facts span,
+  .team-card-foot > span, .team-directory-note, .plan-team-owner > span,
+  .team-ownership-box span, .team-ownership-box small, .team-ownership-box p,
+  .team-detail-totals span, .team-detail-totals small, .team-detail-stamp,
+  .sync-status-heading p, .sync-target small, .sync-target-state,
+  .diagnostics-heading p, .diagnostics-caption, .diagnostics-received,
+  .diagnostics-loading, .diagnostic-event-heading time, .diagnostic-facts,
+  .employee-usage-card-heading > span, .employee-usage-metric > span,
+  .employee-usage-metric > span > small, .employee-usage-metric > div > small,
+  .employee-usage-metric .employee-usage-unknown,
+  .overview-wallet-card > strong > small, .overview-wallet-card > small
+) { color: var(--theme-muted); }
+html[data-theme="dark"] .time-cell { color: var(--theme-muted) !important; }
+html[data-theme="dark"] .identity-owner.mapped { color: var(--theme-secondary); }
+html[data-theme="dark"] :is(.wallet-counts svg, .login-account-heading > svg, .plan-title svg, .employee-usage-card-heading > svg, .employee-usage-operator > div > svg) { color: var(--theme-muted); }
+
+html[data-theme="dark"] :is(.text-button, .row-actions button, .table-link, .manager-advanced-filters summary, .employee-usage-footer button) { color: var(--theme-accent); }
+html[data-theme="dark"] :is(.text-button, .row-actions button, .table-link, .plan-title, .employee-usage-footer button):hover { color: #c3d5ff; }
+html[data-theme="dark"] .row-actions button.muted-action { color: var(--theme-muted); }
+html[data-theme="dark"] :is(.row-actions .danger-action, .directory-row-actions .directory-delete, .form-error, .configuration-form > label span) { color: var(--theme-danger); }
+
+/* Borders and table hover surfaces, including drawer tables. */
+html[data-theme="dark"] :is(
+  .data-table td, .data-table th, .table-footer, .form-actions, .detail-section,
+  .detail-transaction, .login-help, .setup-steps, .setup-steps > div > span,
+  .balance-legends > div + div, .attention-panel > button + button,
+  .attention-update, .login-account-list, .login-account-card + .login-account-card,
+  .team-pool-amount, .plan-meta, .plan-foot, .unlinked-pools, .team-owner-summary,
+  .team-inventory > div + div, .team-card-facts, .team-card-foot, .plan-team-owner,
+  .team-detail-stamp, .sync-target-list, .diagnostics-list > li,
+  .employee-usage-operator, .install-guide > div p + p
+) { border-color: var(--line); }
+html[data-theme="dark"] .data-table th { background: var(--theme-inset); }
+html[data-theme="dark"] .data-table tbody tr:hover { background: var(--theme-raised); }
+html[data-theme="dark"] .unconfirmed span { border-color: var(--theme-muted); }
+html[data-theme="dark"] :is(.footer-right i, .setup-steps > div:not(:last-child)::after) { background: var(--theme-border); }
+
+/* Data cards, balance graphs and known/unknown values. */
+html[data-theme="dark"] :is(.member-plan-card, .team-plan, .team-overview-card, .employee-usage-card) {
+  background: var(--theme-inset); border-color: var(--line);
+}
+html[data-theme="dark"] .login-account-heading { background: var(--theme-surface); }
+html[data-theme="dark"] :is(.login-account-heading:hover, .employee-usage-card-target:hover, .employee-usage-operator:hover) { background: var(--theme-raised); }
+html[data-theme="dark"] .employee-usage-card:hover { border-color: var(--theme-accent-border); }
+html[data-theme="dark"] :is(.stat-card.primary, .detail-balance, .team-detail-totals > div, .overview-wallet-card) {
+  background: var(--theme-accent-surface); border-color: var(--theme-accent-border);
+}
+html[data-theme="dark"] .summary-grid > .stat-card:hover,
+html[data-theme="dark"] .overview-wallet-card:hover { background: var(--theme-hover); border-color: #617ca5; }
+html[data-theme="dark"] .summary-grid > .stat-card.primary:hover { background: var(--theme-active); }
+html[data-theme="dark"] :is(.stat-number, .employee-usage-metric strong, .overview-wallet-card > strong) { color: var(--theme-text); }
+html[data-theme="dark"] :is(.primary .stat-number, .detail-balance > strong, .plan-amount > strong, .team-inventory strong, .team-detail-totals strong) { color: var(--theme-accent); }
+html[data-theme="dark"] :is(.primary .stat-label, .primary p, .detail-balance > span, .overview-wallet-card > span) { color: var(--theme-secondary); }
+html[data-theme="dark"] :is(.stat-label svg, .primary .stat-label svg) { color: var(--theme-muted); }
+html[data-theme="dark"] .detail-balance > p { border-color: var(--theme-accent-border); }
+html[data-theme="dark"] .balance-bar { background: var(--theme-inset); }
+html[data-theme="dark"] :is(.balance-bar > div:first-child, .balance-legends i) { background: #88a9f1; }
+html[data-theme="dark"] :is(.balance-bar > div:last-child, .balance-legends > div + div i) { background: #7783b5; }
+
+/* Labels, avatars and role badges. */
+html[data-theme="dark"] :is(.count-chip, .scope-tag, .role-chip, .employee-usage-removed, .identity-sources > span) {
+  background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-secondary);
+}
+html[data-theme="dark"] :is(.account-avatar, .empty-icon, .attention-icon, .diagnostic-event-icon, .transaction-icon, .welcome-icon, .login-symbol, .setup-steps > div > span, .login-identity-chip) {
+  color: var(--theme-accent); background: var(--theme-accent-surface); border-color: var(--theme-accent-border);
+}
+html[data-theme="dark"] .account-avatar.team { color: #c0baf0; background: #29283f; border-color: #494660; }
+html[data-theme="dark"] :is(.role-chip.admin, .team-relationship-label, .team-member-role, .team-member-role.admin) {
+  background: var(--theme-accent-surface); border-color: var(--theme-accent-border); color: var(--theme-accent);
+}
+html[data-theme="dark"] :is(.scope-tag.member, .team-relationship-label.creator, .team-member-role.creator) { background: var(--theme-warning-surface); color: var(--theme-warning); }
+html[data-theme="dark"] .team-member-role.unknown { background: var(--theme-raised); color: var(--theme-muted); }
+html[data-theme="dark"] :is(.team-owner-summary svg, .team-ownership-box) { color: var(--theme-warning); }
+
+/* Explicit platform and sync states keep their own colors. */
+html[data-theme="dark"] .status { color: var(--theme-muted); }
+html[data-theme="dark"] .status i { background: var(--theme-muted); }
+html[data-theme="dark"] :is(.status-ok, .team-roster-status.complete, .initial-binding.binding-bound > span, .initial-binding.binding-skipped > span, .sync-target-state.completed) { color: var(--theme-success); }
+html[data-theme="dark"] .status-ok i { background: var(--theme-success); }
+html[data-theme="dark"] :is(.status-stale, .status-login_required, .team-roster-status:not(.complete), .stat-number.caution, .initial-binding.binding-conflict > span, .initial-binding.binding-ambiguous > span, .sync-target-state.failed, .sync-target-state.partial, .sync-target-state.no_open_tabs, .sync-target-state.timed_out) { color: var(--theme-warning); }
+html[data-theme="dark"] :is(.status-stale i, .status-login_required i) { background: var(--theme-warning); }
+html[data-theme="dark"] .status-error { color: var(--theme-danger); }
+html[data-theme="dark"] .status-error i { background: var(--theme-danger); }
+html[data-theme="dark"] .status-disabled { color: var(--theme-disabled); }
+html[data-theme="dark"] .status-disabled i { background: var(--theme-disabled); }
+html[data-theme="dark"] .due-soon { color: var(--theme-warning) !important; }
+html[data-theme="dark"] .positive-text { color: var(--theme-success) !important; }
+html[data-theme="dark"] :is(.transaction-icon.positive, .diagnostics-list .success .diagnostic-event-icon) { color: var(--theme-success); background: var(--theme-success-surface); }
+html[data-theme="dark"] :is(.transaction-icon.expired, .attention-icon.amber, .diagnostics-list .warning .diagnostic-event-icon) { color: var(--theme-warning); background: var(--theme-warning-surface); }
+html[data-theme="dark"] .diagnostics-list .error .diagnostic-event-icon { color: var(--theme-danger); background: var(--theme-danger-surface); }
+
+html[data-theme="dark"] :is(.error-notice, .diagnostics-error, .directory-delete-confirm) {
+  color: var(--theme-danger); background: var(--theme-danger-surface); border-color: var(--theme-danger-border);
+}
+html[data-theme="dark"] :is(.setup-notice, .team-view-intro, .wallet-relation, .sync-status-panel, .team-ownership-box) {
+  background: var(--theme-accent-surface); border-color: var(--theme-accent-border);
+}
+html[data-theme="dark"] :is(.setup-notice, .team-view-intro, .wallet-relation, .sync-status-panel) { color: var(--theme-accent); }
+html[data-theme="dark"] :is(.setup-notice strong, .setup-notice p, .team-view-intro p, .wallet-relation strong) { color: var(--theme-secondary); }
+html[data-theme="dark"] .related-wallets button { background: var(--theme-hover); color: var(--theme-accent); border-color: var(--theme-accent-border); }
+html[data-theme="dark"] .related-wallets button:hover { background: var(--theme-active); }
+html[data-theme="dark"] .sync-status-panel.completed { background: var(--theme-success-surface); color: var(--theme-success); border-color: var(--theme-success-border); }
+html[data-theme="dark"] :is(.sync-status-panel.failed, .sync-status-panel.partial, .sync-status-panel.timed_out) { background: var(--theme-warning-surface); color: var(--theme-warning); border-color: var(--theme-warning-border); }
+html[data-theme="dark"] .sync-request-error { color: var(--theme-danger); }
+html[data-theme="dark"] .credit-expiry-list > .credit-expiry-badge { background: var(--theme-accent-surface); color: var(--theme-secondary); border-color: var(--theme-accent-border); }
+html[data-theme="dark"] .credit-expiry-list > .credit-expiry-badge.urgent { background: var(--theme-danger-surface); color: var(--theme-danger); border-color: var(--theme-danger-border); }
+html[data-theme="dark"] .credit-expiry-list > .credit-expiry-badge.unknown { background: transparent; color: var(--theme-muted); border: 0; }
+html[data-theme="dark"] .live-data-label { color: var(--theme-secondary); }
+
+/* Inputs, custom dropdown portals and editable directory forms. */
+html[data-theme="dark"] :is(.semi-input-wrapper, .search-input, .directory-select, .select-wrapper select) {
+  background-color: var(--theme-inset); border-color: var(--theme-border); color: var(--theme-secondary);
+}
+html[data-theme="dark"] :is(.semi-input-wrapper:hover, .search-input:hover, .directory-select:hover) { border-color: #647998; }
+html[data-theme="dark"] :is(.semi-input-wrapper-focus, .search-input:focus-within) { border-color: var(--theme-focus); box-shadow: 0 0 0 3px #82a9ff22; }
+html[data-theme="dark"] :is(.semi-input, .search-input input, .directory-select, .select-wrapper select) { color: var(--theme-text); }
+html[data-theme="dark"] :is(.semi-input::placeholder, .search-input input::placeholder) { color: var(--theme-muted); opacity: 1; }
+html[data-theme="dark"] :is(.search-input, .search-input button) { color: var(--theme-muted); }
+html[data-theme="dark"] .semi-input-wrapper-disabled { background: #202b3b; border-color: var(--line); }
+html[data-theme="dark"] :is(.semi-input-disabled, .semi-input-wrapper-disabled .semi-input) { color: var(--theme-disabled); -webkit-text-fill-color: var(--theme-disabled); }
+html[data-theme="dark"] :is(.directory-readonly, .identity-form-platform, .directory-form, .owner-form) { background: var(--theme-raised); color: var(--theme-secondary); border-color: var(--line); }
+html[data-theme="dark"] .role-options > label { border-color: var(--theme-border); color: var(--theme-muted); }
+html[data-theme="dark"] .role-options > label.chosen { background: var(--theme-accent-surface); border-color: var(--theme-focus); color: var(--theme-accent); }
+html[data-theme="dark"] .role-options input { accent-color: var(--theme-focus); }
+html[data-theme="dark"] .manager-select-field .manager-select { background: var(--theme-inset); border-color: var(--theme-border); color: var(--theme-secondary); }
+html[data-theme="dark"] .manager-select-field .manager-select:hover { background: var(--theme-raised); border-color: #647998; }
+html[data-theme="dark"] .manager-select-field .manager-select.semi-select-focus { border-color: var(--theme-focus); box-shadow: 0 0 0 2px #82a9ff22; }
+html[data-theme="dark"] .manager-select-field .semi-select-selection-text { color: var(--theme-secondary); }
+html[data-theme="dark"] :is(.manager-select-field .semi-select-arrow, .manager-select-field .manager-select-prefix) { color: var(--theme-muted); }
+html[data-theme="dark"] .manager-select-field .manager-select.semi-select-disabled { background: #202b3b; border-color: var(--line); color: var(--theme-disabled); }
+html[data-theme="dark"] .manager-select-menu { background: var(--theme-raised); border-color: var(--theme-border); box-shadow: var(--theme-shadow); }
+html[data-theme="dark"] .manager-select-menu .semi-select-option { color: var(--theme-secondary); }
+html[data-theme="dark"] .manager-select-menu .semi-select-option-selected { color: var(--theme-accent); background: var(--theme-active); }
+html[data-theme="dark"] .manager-select-menu .semi-select-option-focused { background: var(--theme-hover); }
+html[data-theme="dark"] .manager-select-menu .semi-select-option-selected.semi-select-option-focused { background: #304b74; }
+html[data-theme="dark"] .manager-select-menu .semi-select-option-selected .semi-select-option-icon { color: var(--theme-accent); }
+html[data-theme="dark"] .manager-select-menu .semi-select-option-empty { color: var(--theme-muted); }
+html[data-theme="dark"] .manager-select-menu .semi-select-option-disabled { color: var(--theme-disabled); background: transparent; }
+html[data-theme="dark"] .manager-select-menu .semi-input-wrapper { background: var(--theme-inset); border-color: var(--theme-border); }
+
+/* Semi component surfaces live in portals, so they use the body theme too. */
+html[data-theme="dark"] .semi-button-light { background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-secondary); }
+html[data-theme="dark"] .semi-button-light:hover { background: var(--theme-hover); border-color: #647998; }
+html[data-theme="dark"] .semi-button-tertiary { color: var(--theme-secondary); }
+html[data-theme="dark"] .semi-button-danger.semi-button-light { background: var(--theme-danger-surface); color: var(--theme-danger); border-color: var(--theme-danger-border); }
+html[data-theme="dark"] .semi-button-danger.semi-button-light:hover { background: #523139; }
+html[data-theme="dark"] .semi-button-danger:not(.semi-button-light):not(.semi-button-borderless):not(.semi-button-outline) { background: #a33f4b; color: #fff; }
+html[data-theme="dark"] .semi-button-danger:not(.semi-button-light):not(.semi-button-borderless):not(.semi-button-outline):hover { background: #b64b58; }
+html[data-theme="dark"] .semi-button-disabled { color: var(--theme-disabled); }
+html[data-theme="dark"] .semi-button-primary-disabled.semi-button-solid,
+html[data-theme="dark"] .semi-button-primary-disabled.semi-button-solid:hover,
+html[data-theme="dark"] .semi-button-primary-disabled.semi-button-solid:active {
+  background: #263448;
+  border-color: var(--theme-border);
+  color: #9aacc4;
+  box-shadow: none;
+  opacity: 1;
+}
+html[data-theme="dark"] .semi-modal-content { background: var(--theme-surface); color: var(--theme-text); box-shadow: var(--theme-shadow); border-color: var(--theme-border); }
+html[data-theme="dark"] .semi-modal-header { border-color: var(--line); }
+html[data-theme="dark"] :is(.semi-modal-title, .semi-sidesheet-title) { color: var(--theme-text); }
+html[data-theme="dark"] .account-sheet .semi-sidesheet-inner { background: var(--theme-surface); color: var(--theme-text); box-shadow: -14px 0 70px #00000050; }
+html[data-theme="dark"] .account-sheet .semi-sidesheet-header { border-color: var(--line); }
+html[data-theme="dark"] :is(.semi-toast-content, .semi-popover-wrapper, .semi-tooltip-wrapper) { background: var(--theme-raised); color: var(--theme-text); border-color: var(--theme-border); box-shadow: var(--theme-shadow); }
+html[data-theme="dark"] .semi-tooltip-wrapper .semi-tooltip-icon-arrow { color: var(--theme-raised); }
+html[data-theme="dark"] .detail-tabs { background: var(--theme-inset); }
+html[data-theme="dark"] .detail-tabs > span { background: var(--theme-hover); box-shadow: 0 1px 5px #00000030; }
+html[data-theme="dark"] .detail-tabs button { color: var(--theme-muted); }
+html[data-theme="dark"] .detail-tabs button.active { color: var(--theme-text); }
+html[data-theme="dark"] .team-detail-tabs { box-shadow: 0 -14px 0 14px var(--theme-surface); }
+
+/* Initial loading placeholders share the same surface hierarchy. */
+html[data-theme="dark"] :is(.boot-line, .skeleton-card i, .skeleton-card b, .skeleton-table i) { background: var(--theme-hover); }
+html[data-theme="dark"] .boot-line::after { background: var(--theme-accent); }

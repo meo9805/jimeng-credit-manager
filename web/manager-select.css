@@ -1,0 +1,27 @@
+.manager-select-field { display: inline-flex; min-width: 0; max-width: 100%; vertical-align: middle; }
+.manager-select-field .manager-select { min-width: 130px; max-width: 340px; height: 35px; background: #fff; border: 1px solid #e1e8f2; border-radius: 6px; color: #52647d; font-size: 13px; }
+.manager-select-field .manager-select:hover { border-color: #b8c9e4; background: #fbfcff; }
+.manager-select-field .manager-select.semi-select-focus { border-color: #7498d4; box-shadow: 0 0 0 2px #eaf0fc; }
+.manager-select-field .semi-select-selection { margin-left: 10px; }
+.manager-select-field .semi-select-selection-text { color: #52647d; }
+.manager-select-field .semi-select-arrow { color: #91a0b8; margin-right: 10px; }
+.manager-select-field .manager-select-prefix { font-size: 12px; color: #7a8aa3; padding-left: 10px; white-space: nowrap; }
+.manager-select-field .manager-select.semi-select-disabled { background: #f4f6fa; border-color: #e5eaf2; opacity: .65; }
+.manager-select-menu { min-width: 180px; max-width: min(470px, calc(100vw - 24px)); padding: 5px; border: 1px solid #e1e8f2; border-radius: 9px; background: #fff; box-shadow: 0 8px 30px #23395a1c; }
+.manager-select-menu .semi-select-option { border-radius: 5px; color: #52647d; font-size: 13px; padding: 9px 12px; min-height: 36px; white-space: normal; }
+.manager-select-menu .semi-select-option-selected { background: #edf3ff; color: #416bbe; font-weight: 600; }
+.manager-select-menu .semi-select-option-focused { background: #f2f6fc; }
+.manager-select-menu .semi-select-option-selected.semi-select-option-focused { background: #e7efff; }
+.manager-select-menu .semi-select-option-selected .semi-select-option-icon { color: #4e77ca; }
+.manager-select-menu .semi-select-option-empty { color: #8a97ab; }
+.manager-select-menu .semi-input-wrapper { border: 1px solid #e1e8f2; border-radius: 6px; background: #f8faff; }
+.manager-select-field.directory-field { display: flex; width: 100%; }
+.manager-select-field.directory-field .manager-select { width: 100%; max-width: none; height: 40px; }
+.directory-form .manager-select-field.directory-field .manager-select { height: 32px; }
+.manager-advanced-filters { margin: -5px 21px 18px; }
+.manager-advanced-filters summary { color: #6880a7; font-size: 12px; cursor: pointer; width: fit-content; }
+.manager-advanced-filters .filter-bar { padding: 12px 0 0; }
+@media (max-width: 560px) {
+  .filter-bar > .manager-select-field { flex: 1 1 140px; }
+  .manager-select-field .manager-select { width: 100%; max-width: none; }
+}

@@ -1,0 +1,4 @@
+.ledger-selection-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:12px 23px; background:var(--wash); border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.ledger-date-range { display:flex; align-items:center; gap:8px; }
+.ledger-date-range input { border:1px solid var(--line); border-radius:6px; padding:7px 9px; min-width:0; background:var(--paper); color:var(--ink); font:inherit; font-size:12px; }
+.ledger-panel>.form-error { margin:10px 23px; }

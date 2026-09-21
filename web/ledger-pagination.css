@@ -1,0 +1,4 @@
+.ledger-pagination { flex-wrap: wrap; }
+.ledger-pagination-controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.ledger-pagination-controls > span { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.detail-transactions .ledger-pagination { padding-left: 0; padding-right: 0; }

@@ -1,0 +1,23 @@
+{
+  "name": "jimeng-credit-manager",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "dev": "node server/index.mjs",
+    "start": "node server/index.mjs",
+    "build": "vite build",
+    "test": "node --test tests/*.test.mjs",
+    "preview:web": "vite --host 127.0.0.1 --port 4319"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "@douyinfe/semi-ui": "^2.90.0",
+    "@douyinfe/semi-icons": "^2.90.0",
+    "lucide-react": "^0.468.0",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {"vite": "^6.1.0", "@vitejs/plugin-react": "^4.3.4"}
+}
