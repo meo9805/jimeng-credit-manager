@@ -34,6 +34,7 @@ function fixture(t) {
 test('first bound personal login supplies wallet owner and department without rewriting wallet or historical operator data', t => {
   const f = fixture(t);
   f.collect([f.personal()], { transactions:[{ platformUserId:'own-login', scope:'personal', spaceId:'personal', eventId:'historical', occurredAt:'2026-09-14T03:00:00Z', kind:'consume', amount:-5 }] });
+  f.store.patchIdentity('own-login',{employeeId:f.owner.id});
   const account = f.account(), history = f.store.dashboard().transactions;
   assert.equal(account.ownerEmployeeId, f.owner.id);
   assert.equal(account.ownerName, f.owner.name);
@@ -45,12 +46,12 @@ test('first bound personal login supplies wallet owner and department without re
   assert.equal(history[0].operatorName, null);
   f.store.patchEmployee(f.owner.id, { departmentId:f.teaching.id });
   assert.equal(f.store.getAccount(account.id).ownerDepartmentId, f.teaching.id);
-  assert.deepEqual(f.store.dashboard().transactions, history);
+  assert.deepEqual(f.store.dashboard().transactions.map(({ownershipSnapshot,...row})=>row), history.map(({ownershipSnapshot,...row})=>row));
 });
 
 test('borrowing an account cannot replace wallet ownership or create ownership for an unbound login', t => {
   const f = fixture(t);
-  f.collect([f.personal()]);
+  f.collect([f.personal()]);f.store.patchIdentity('own-login',{employeeId:f.owner.id});
   const otherDevice = f.store.createInstallation({ employeeId:f.borrower.id, role:'collector' });
   f.collect([f.personal()], {}, otherDevice);
   assert.equal(f.account().ownerEmployeeId, f.owner.id);
@@ -76,6 +77,7 @@ test('a unique creator role provides a default; absent or contradictory creator 
   const f = fixture(t);
   f.collect([f.personal(), f.team('team_member'), f.team('team_total')], { teams:[{ spaceId:'team-a', members:[{ platformUserId:'own-login', role:'member' }] }] });
   assert.equal(f.account('team_total').ownerName, null);
+  f.store.patchIdentity('own-login',{employeeId:f.owner.id});
   f.collect([], { teams:[{ spaceId:'team-a', members:[{ platformUserId:'own-login', role:'creator' }] }] });
   assert.equal(f.account('team_total').ownerEmployeeId, f.owner.id);
   f.collect([], { teams:[{ spaceId:'team-a', creatorPlatformUserId:'different-creator', members:[{ platformUserId:'different-creator', role:'member' }] }] });
@@ -109,6 +111,7 @@ test('manual overrides win and omitted fields stay automatic; null restores the 
 test('explicit team wallet cost ownership survives creator corrections, new snapshots and renamed departments', t => {
   const f = fixture(t);
   f.collect([f.personal(), f.team('team_total'), f.team('team_member')], { teams:[{ spaceId:'team-a', creatorPlatformUserId:'own-login', members:[] }] });
+  f.store.patchIdentity('own-login',{employeeId:f.owner.id});
   for (const scope of ['team_total', 'team_member']) {
     assert.equal(f.account(scope).ownerEmployeeId, f.owner.id, 'explicit creator metadata is sufficient without a roster');
     f.store.patchAccount(f.account(scope).id, { ownerEmployeeId:f.owner.id, ownerDepartmentId:f.drama.id });
@@ -116,6 +119,7 @@ test('explicit team wallet cost ownership survives creator corrections, new snap
   f.store.patchIdentity('own-login', { employeeId:f.borrower.id });
   f.collect([f.team('team_total'), f.team('team_member')]);
   f.store.patchDepartment(f.drama.id, { name:'短剧成本中心' });
+  f.store.patchIdentity('own-login',{employeeId:f.owner.id});
   for (const scope of ['team_total', 'team_member']) {
     assert.equal(f.account(scope).ownerEmployeeId, f.owner.id);
     assert.equal(f.account(scope).ownerDepartment, '短剧成本中心');

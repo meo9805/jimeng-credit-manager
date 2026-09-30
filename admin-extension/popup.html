@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>即梦 · 本机检查</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header><img src="icons/yiqian-48.png" alt=""><div><strong>即梦积分管家</strong><small>管理员观察版 <span id="version"></span></small></div></header>
+  <main>
+    <div class="scope">账号与流水不上报</div>
+    <div id="status" class="status" role="status">点击检查当前即梦页面</div>
+    <button id="check" type="button">检查个人与团队</button>
+    <div id="overview" hidden></div>
+    <div id="spaces"></div>
+    <section class="pricing"><h2>平台套餐价格</h2><p id="price-status" role="status">在即梦页面读取价格后，可切到管理台同步。</p><button id="read-prices" type="button">从即梦读取价格</button><button id="sync-prices" type="button" hidden>同步到管理台</button></section>
+    <details id="logs"><summary>排障记录</summary><ol id="log-list"></ol></details>
+  </main>
+  <footer>仅手动读取；账号与流水不上传。价格须再次点击后才同步管理台。</footer>
+  <script type="module" src="popup.mjs"></script>
+</body>
+</html>

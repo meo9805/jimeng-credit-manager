@@ -89,6 +89,9 @@ html[data-theme="dark"] .login-card { box-shadow: var(--theme-shadow); }
 html[data-theme="dark"] :is(.nav-item, .breadcrumb strong, .help-link, .local-status) { color: var(--theme-secondary); }
 html[data-theme="dark"] .nav-item:hover { background: var(--theme-hover); color: var(--theme-text); }
 html[data-theme="dark"] .nav-item.active { background: var(--theme-accent-surface); color: var(--theme-accent); }
+html[data-theme="dark"] .mobile-more-panel { background: var(--theme-surface); border-color: var(--line); }
+html[data-theme="dark"] .mobile-more-panel button { color: var(--theme-secondary); }
+html[data-theme="dark"] .mobile-more-panel button:hover, html[data-theme="dark"] .mobile-more-panel button.active { background: var(--theme-accent-surface); color: var(--theme-accent); }
 html[data-theme="dark"] :is(.nav-item small, .admin-avatar, .employee-avatar) { color: var(--theme-secondary); background: var(--theme-hover); }
 html[data-theme="dark"] :is(.icon-button, .row-arrow) { color: var(--theme-muted); }
 html[data-theme="dark"] :is(.icon-button, .row-arrow):hover { color: var(--theme-accent); background: var(--theme-hover); }
@@ -312,7 +315,6 @@ html[data-theme="dark"] .detail-tabs { background: var(--theme-inset); }
 html[data-theme="dark"] .detail-tabs > span { background: var(--theme-hover); box-shadow: 0 1px 5px #00000030; }
 html[data-theme="dark"] .detail-tabs button { color: var(--theme-muted); }
 html[data-theme="dark"] .detail-tabs button.active { color: var(--theme-text); }
-html[data-theme="dark"] .team-detail-tabs { box-shadow: 0 -14px 0 14px var(--theme-surface); }
 
 /* Initial loading placeholders share the same surface hierarchy. */
 html[data-theme="dark"] :is(.boot-line, .skeleton-card i, .skeleton-card b, .skeleton-table i) { background: var(--theme-hover); }

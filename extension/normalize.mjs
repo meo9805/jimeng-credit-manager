@@ -1,5 +1,10 @@
-const safeId = value => typeof value === 'string' && /^[a-zA-Z0-9:_-]{1,160}$/.test(value) ? value : null;
+const safeId = value => typeof value === 'string' && /^[\w.@:-]{1,160}$/.test(value) ? value : null;
 const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const factId = value => typeof value === 'string' && value.length <= 160 ? value :
+  typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null;
+const factScalar = value => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e12 ? value :
+  typeof value === 'string' && value.length <= 160 ? value : null;
+const factText = (value,max) => typeof value === 'string' ? value.slice(0,max).replace(/[\u0000-\u001f\u007f]/gu,' ') : null;
 const batchFields = (batches, complete, totals) => {
   if (batches === undefined) return {};
   const creditBatches = [];
@@ -42,6 +47,31 @@ export function normalizeObservation(raw) {
       ...batchFields(raw.teamCreditBatches,raw.teamCreditBatchesComplete,{subscription:raw.teamVipCredit,gift:raw.teamGiftCredit,purchase:raw.teamPurchaseCredit}) });
   }
   const unique = new Map();
+  // Raw platform credit facts are retained independently from today's kind,
+  // amount-sign and owner classification rules. Future server rules can revisit
+  // them without another employee extension update.
+  const creditHistoryFacts = Array.isArray(raw.records) && raw.records.length ? [{
+    context:{loginUserId:platformUserId,queryScope:raw.ledgerScope === 'team_total' ? 'team_total' : base.scope,
+      teamId:team ? teamId : null,readAt:raw.observedAt},
+    records:raw.records.slice(0,100).map(r=>({
+      historyId:factId(r?.historyId),submitId:factId(r?.submitId),historyType:factScalar(r?.historyType),
+      amount:factScalar(r?.amount),createTime:factScalar(r?.createTime),userId:factId(r?.userId),
+      teamId:factId(r?.teamId),title:factText(r?.title,120),status:factText(r?.status,100),
+    })),
+  }] : [];
+  const subscriptionFacts = Array.isArray(raw.subscriptionFacts) ? raw.subscriptionFacts.slice(0,1)
+    .filter(f=>f && f.spaceType===raw.accountType && factId(f.loginUserId)===platformUserId &&
+      (team ? factId(f.teamId)===teamId : f.teamId==null))
+    .map(f=>({spaceType:f.spaceType,loginUserId:platformUserId,teamId:team ? teamId : null,readAt:f.readAt || raw.observedAt,
+      active:typeof f.active==='boolean'?f.active:null,planLevel:factId(f.planLevel),productId:factId(f.productId),
+      subscribeCycle:factScalar(f.subscribeCycle),cycleUnit:factId(f.cycleUnit),startTime:factScalar(f.startTime),
+      endTime:factScalar(f.endTime),nextRenewalTime:factScalar(f.nextRenewalTime)})) : [];
+  const creditSourceFacts = Array.isArray(raw.creditSourceFacts) ? raw.creditSourceFacts.slice(0,64)
+    .filter(f=>f && ['user_credit','user_credit_history','user_info','team_info','team_member_list'].includes(f.source) &&
+      factId(f.loginUserId)===platformUserId && ['personal','team_member','team_total'].includes(f.queryScope) &&
+      (team ? factId(f.teamId)===teamId : f.teamId==null) && f.payload && typeof f.payload==='object')
+    .map(f=>({source:f.source,loginUserId:platformUserId,teamId:team ? teamId : null,
+      queryScope:f.queryScope,readAt:f.readAt || raw.observedAt,payload:f.payload})) : [];
   const teams = [];
   const snapshot = raw.teamSnapshot;
   if (team && snapshot && safeId(snapshot.spaceId) === teamId) {
@@ -76,5 +106,9 @@ export function normalizeObservation(raw) {
   }
   // This identity comes from page-reader's verified, stable login snapshot,
   // independently of whether the credit request returned a member balance.
-  return { ...empty, loginIdentity:{platformUserId,displayName:base.displayName}, accounts, transactions: [...unique.values()], ...(teams.length ? {teams} : {}) };
+  return { ...empty, loginIdentity:{platformUserId,displayName:base.displayName}, accounts, transactions: [...unique.values()],
+    ...(creditHistoryFacts.length ? {creditHistoryFacts} : {}),
+    ...(subscriptionFacts.length ? {subscriptionFacts} : {}),
+    ...(creditSourceFacts.length ? {creditSourceFacts} : {}),
+    ...(teams.length ? {teams} : {}) };
 }

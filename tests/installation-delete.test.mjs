@@ -20,7 +20,7 @@ function fixture(t){
 
 test('deleting an identity-only collector preserves its observed nickname and ownership across restart',t=>{
   const f=fixture(t);f.store.ingest(f.device,f.input);
-  f.store.patchIdentity('login-only',{boundPhone:'199****0000'});
+  f.store.patchIdentity('login-only',{employeeId:f.employee.id,boundPhone:'199****0000'});
   const before=f.store.dashboard().identities;
   assert.equal(before.length,1);assert.equal(before[0].employeeId,f.employee.id);assert.equal(before[0].nickname,'只有登录昵称');
   f.store.deleteInstallation(f.device.id);f.restart();
@@ -42,7 +42,7 @@ test('collector deletion is atomic when a referenced cleanup fails',t=>{
   const before=f.store.dashboard();
   assert.throws(()=>f.store.deleteInstallation(f.device.id),/test deletion failure/);
   assert.deepEqual(f.store.dashboard(),before);assert.equal(f.store.authenticate(f.token).id,f.device.id);
-  assert.equal(db.prepare('SELECT observed_nickname FROM identity_mappings WHERE platform_user_id=?').get('login-only').observed_nickname,null);
+  assert.equal(db.prepare('SELECT observed_nickname FROM identity_mappings WHERE platform_user_id=?').get('login-only')?.observed_nickname,undefined);
   db.exec('DROP TRIGGER block_collector_delete');db.close();
   f.store.deleteInstallation(f.device.id);assert.deepEqual(f.store.dashboard().installations,[]);
 });

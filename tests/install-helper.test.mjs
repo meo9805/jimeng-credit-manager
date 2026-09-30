@@ -24,7 +24,7 @@ test('both static helpers preserve manual loading and provide a choice before op
   assert.match(mac,/\/usr\/bin\/osascript - "\$chrome_path" "\$edge_path"/);
   assert.match(mac,/\/usr\/bin\/osascript - "\$script_dir" "\$extension_page"/);
   for(const script of [powershell,mac]){
-    for(const text of ['Chrome','Edge','chrome://extensions/','edge://extensions/','开发者模式','当前解压文件夹','本人的即梦'])assert.ok(script.includes(text),text);
+    for(const text of ['Chrome','Edge','chrome://extensions/','edge://extensions/','开发者模式','当前解压文件夹','管理员安排的即梦账号'])assert.ok(script.includes(text),text);
     assert.doesNotMatch(script,/ExecutionPolicy|Invoke-WebRequest|https?:\/\/|jimeng\.jianying\.com|provision\.json|Authorization|token|sudo|xattr|reg(?:edit|\.exe)|User Data|--load-extension/);
   }
 });

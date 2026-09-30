@@ -30,8 +30,8 @@ function fixture(t){
 test('evidence before a ledger matches the authenticated employee without creating a wallet, first-login mapping or owner claim',t=>{
   const f=fixture(t);
   assert.equal(f.collect({operationEvidence:[evidence()]},{...f.device,employeeName:'伪造员工',employeeId:f.other.id}).operations,1);
-  assert.equal(f.store.dashboard().accounts.length,0);assert.equal(f.store.dashboard().identities.length,0);
-  assert.equal(f.store.getInstallation(f.device.id).initialIdentityBinding.status,'pending');
+  assert.equal(f.store.dashboard().accounts.length,0);assert.equal(f.store.dashboard().identities.length,1);assert.equal(f.store.dashboard().identities[0].employeeId,null);
+  assert.equal(f.store.getInstallation(f.device.id).initialIdentityBinding.status,'skipped');
   f.collect({transactions:[transaction()]});const row=f.rows()[0];
   assert.equal(row.attribution,'matched');assert.equal(row.operatorEmployeeId,f.employee.id);
   assert.equal(row.operatorName,f.employee.name);assert.equal(row.operatorDepartment,f.department.name);
@@ -138,11 +138,12 @@ test('reconciliation narrows by the indexed exact submission and charged user ra
   }finally{db.close();}
 });
 
-test('an unassigned collector cannot invent an employee and reassigning a pre-login device cannot rewrite a previous receipt',t=>{
-  const f=fixture(t);f.store.patchInstallation(f.device.id,{employeeId:null});
-  f.collect({operationEvidence:[evidence()],transactions:[transaction()]});assert.equal(f.rows()[0].attribution,'unconfirmed');
-  f.store.patchInstallation(f.device.id,{employeeId:f.employee.id});
-  f.collect({operationEvidence:[evidence()]});assert.equal(f.rows()[0].attribution,'unconfirmed');assert.equal(f.stored().evidence.length,2);
+test('rejected collector reassignment keeps the original employee on operation evidence',t=>{
+  const f=fixture(t);f.collect({operationEvidence:[evidence()],transactions:[transaction()]});
+  const original=f.rows()[0];assert.equal(original.operatorEmployeeId,f.employee.id);
+  assert.throws(()=>f.store.patchInstallation(f.device.id,{employeeId:f.other.id}),error=>error.status===409);
+  f.collect({operationEvidence:[evidence()]});
+  assert.deepEqual(f.rows()[0],original);assert.equal(f.stored().evidence.length,1);
 });
 
 test('operation evidence rejects identity forgery and unsupported shapes without weakening legacy ingest validation',()=>{

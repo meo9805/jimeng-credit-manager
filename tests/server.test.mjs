@@ -7,6 +7,8 @@ import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { unzipSync, strFromU8 } from 'fflate';
 import { createApp } from '../server/index.mjs';
+import { createReferenceRates } from '../server/reference-rates.mjs';
+import { referenceValue } from '../shared/reference-pricing.mjs';
 
 const NOW=Date.parse('2026-09-12T10:00:00.000Z');
 const OBS='2026-09-12T09:00:00.000Z';
@@ -89,6 +91,102 @@ async function fixture(t,{clock=()=>NOW}={}) {
   return {app,origin,directory,dataDir,request,login,department,employee,installation,ingest,dashboard};
 }
 
+test('reference rates persist once, require admin and preserve earlier effective prices',async t=>{
+  let clock=NOW;
+  const f=await fixture(t,{clock:()=>clock});await f.login();const device=await f.installation();
+  assert.equal((await f.ingest(device,[observed('1001',{membershipPlan:'超级会员',billingCycle:'连续包年',subscriptionObservedAt:OBS})])).status,200);
+  const initial=await f.dashboard();
+  const baseline=initial.referenceRates.find(rate=>rate.walletKey==='personal:1001');
+  assert.ok(baseline?.perThousand>0);assert.equal(baseline.basis,'initial_reference');
+  assert.equal(baseline.effectiveAt,'1970-01-01T00:00:00.000Z');
+  const payload={walletKey:'personal:1001',perThousand:123};
+  assert.equal((await f.request('/api/reference-rates',{method:'POST',body:payload})).status,401);
+  assert.equal((await f.request('/api/reference-rates',{method:'POST',body:payload,token:device.token})).status,403);
+  for(const perThousand of [0,-1,'10',1000001]) assert.equal((await f.request('/api/reference-rates',{method:'POST',admin:true,body:{...payload,perThousand}})).status,400);
+  assert.equal((await f.request('/api/reference-rates',{method:'POST',admin:true,body:{...payload,effectiveAt:OBS}})).status,400);
+  assert.equal((await f.request('/api/reference-rates',{method:'POST',admin:true,body:{...payload,walletKey:'personal:missing'}})).status,404);
+  const oldEtag=(await f.request('/api/dashboard',{admin:true})).headers.get('etag');
+  clock+=60000;
+  const saved=await f.request('/api/reference-rates',{method:'POST',admin:true,body:payload});assert.equal(saved.status,201);
+  const rate=await saved.json();assert.equal(rate.effectiveAt,new Date(clock).toISOString());assert.equal(rate.basis,'effective');
+  assert.equal((await f.request('/api/dashboard',{admin:true,headers:{'If-None-Match':oldEtag}})).status,200);
+  const db=new DatabaseSync(path.join(f.dataDir,'credits.sqlite'));
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM reference_rates').get().n,2);db.close();
+  await f.request('/api/reference-rates',{method:'POST',admin:true,body:payload});
+  assert.equal((await f.dashboard()).referenceRates.length,2,'repeated save does not append duplicate revisions');
+  await f.ingest(device,[observed('1001',{balance:0,subscriptionBalance:0,membershipPlan:'高级会员',billingCycle:'连续包月',subscriptionObservedAt:new Date(clock).toISOString()})],[],{observedAt:new Date(clock).toISOString()});
+  assert.deepEqual((await f.dashboard()).referenceRates,[baseline,rate],'new balance or plan does not silently reprice historical data');
+});
+
+test('unknown plan cycle receives a frozen estimate and manual revisions apply only afterward',async t=>{
+  let clock=NOW;
+  const f=await fixture(t,{clock:()=>clock});await f.login();const device=await f.installation();
+  await f.ingest(device,[observed('1001',{membershipPlan:'高级会员',membershipExpiresAt:'2027-09-01T00:00:00.000Z'})]);
+  const initial=await f.dashboard(),baseline=initial.referenceRates[0],account=initial.accounts[0];
+  assert.equal(initial.referenceRates.length,1);
+  assert.equal(baseline.perThousand,998/12320*1000);
+  assert.equal(baseline.source,'plan_estimate');
+  assert.equal(baseline.effectiveAt,'1970-01-01T00:00:00.000Z');
+  assert.equal(baseline.basis,'initial_reference');
+  const oldValue=referenceValue(account,100,[baseline],OBS);
+  clock+=60000;
+  const saved=await f.request('/api/reference-rates',{method:'POST',admin:true,body:{walletKey:'personal:1001',perThousand:70}});
+  assert.equal(saved.status,201);const rate=await saved.json();assert.equal(rate.basis,'effective');assert.equal(rate.source,'manual');
+  assert.equal(rate.effectiveAt,new Date(clock).toISOString());
+  const rates=(await f.dashboard()).referenceRates;
+  assert.deepEqual(rates,[baseline,rate]);
+  assert.equal(referenceValue(account,100,rates,OBS),oldValue);
+  assert.equal(referenceValue(account,100,rates,clock),7);
+});
+
+test('missing personal plans and legacy team plans persist fallback prices without duplicate team wallets',async t=>{
+  const f=await fixture(t);await f.login();const device=await f.installation();
+  const team={spaceId:'legacy-team',spaceType:'team',membershipPlan:'高级团队会员'};
+  assert.equal((await f.ingest(device,[observed(),
+    observed('1001',{...team,scope:'team_member'}),observed('1001',{...team,scope:'team_total'}),
+  ])).status,200);
+  const first=await f.dashboard();
+  assert.equal(first.referenceRates.length,2);
+  const personal=first.referenceRates.find(rate=>rate.walletKey==='personal:1001');
+  const shared=first.referenceRates.find(rate=>rate.walletKey==='team:legacy-team');
+  assert.equal(personal.source,'purchase_estimate');assert.equal(personal.perThousand,100);
+  assert.equal(shared.source,'team_estimate');assert.equal(shared.perThousand,6319/68250*1000);
+  assert.deepEqual((await f.dashboard()).referenceRates,first.referenceRates,'repeated snapshots preserve the original references');
+  const persisted=new DatabaseSync(path.join(f.dataDir,'credits.sqlite'));
+  try{
+    assert.equal(persisted.prepare('SELECT COUNT(*) AS n FROM reference_rates').get().n,2);
+    assert.equal(persisted.prepare('SELECT COUNT(*) AS n FROM reference_rates WHERE wallet_key=?').get('team:legacy-team').n,1);
+  }finally{persisted.close();}
+});
+
+test('team seed chooses the most reliable observation regardless of order and survives reopening',t=>{
+  const directory=mkdtempSync(path.join(os.tmpdir(),'jimeng-reference-test-'));
+  t.after(()=>rmSync(directory,{recursive:true,force:true}));
+  const file=path.join(directory,'reference.sqlite');
+  let db=new DatabaseSync(file),rates=createReferenceRates(db,()=>new Date(NOW).toISOString());
+  const weak={scope:'team_total',platformUserId:'1001',membershipPlan:'高级团队会员'};
+  const known={scope:'team_member',platformUserId:'1002',membershipPlan:'超级团队会员'};
+  const explicit={...known,platformUserId:'1003',billingCycle:'连续包月'};
+  try{
+    rates.seed([
+      ...[weak,known,explicit].map(account=>({...account,spaceId:'forward'})),
+      ...[explicit,known,weak].map(account=>({...account,spaceId:'reverse'})),
+      ...[weak,known].map(account=>({...account,spaceId:'known-monthly'})),
+    ]);
+    const originals=rates.list();
+    assert.equal(originals.length,3);
+    for(const key of ['team:forward','team:reverse']){
+      const rate=originals.find(value=>value.walletKey===key);
+      assert.equal(rate.source,'platform_reference');assert.equal(rate.perThousand,6319/68250*1000);
+      assert.equal(rate.revision,1);
+    }
+    assert.equal(originals.find(value=>value.walletKey==='team:known-monthly').source,'plan_estimate');
+    db.close();db=new DatabaseSync(file);rates=createReferenceRates(db,()=>new Date(NOW+60000).toISOString());
+    rates.seed([{...weak,spaceId:'forward'},{...explicit,spaceId:'known-monthly'}]);
+    assert.deepEqual(rates.list(),originals,'later metadata and process restarts cannot overwrite a stored estimate');
+  }finally{db.close();}
+});
+
 test('administrator sessions and collector scopes prevent data reads, writes, and privilege escalation',async t=>{
   const f=await fixture(t);
   assert.deepEqual(await (await f.request('/api/session')).json(),{authenticated:false,role:null});
@@ -168,7 +266,7 @@ test('only same-site administrator requests can resolve first enrollment as coll
   assert.equal((await f.ingest(owner,[observed()],[event()],snapshot)).status,200);
   assert.equal((await f.ingest(borrower,[observed()],[],snapshot)).status,200);
   const before=await f.dashboard(),original=before.installations.find(item=>item.id===borrower.id).initialIdentityBinding;
-  assert.equal(original.status,'conflict');
+  assert.equal(original.status,'skipped');
   const post=(extra={})=>f.request(route,{method:'POST',body:{},...extra});
   assert.equal((await post()).status,401);
   assert.equal((await post({token:borrower.token})).status,403);
@@ -180,20 +278,20 @@ test('only same-site administrator requests can resolve first enrollment as coll
   assert.deepEqual((await f.dashboard()).installations.find(item=>item.id===borrower.id).initialIdentityBinding,original);
   const response=await post({admin:true,headers:{Origin:f.origin}});assert.equal(response.status,200);
   const resolved=await response.json();assert.equal(resolved.id,borrower.id);assert.equal(resolved.employeeId,borrower.employeeId);assert.equal(resolved.token,undefined);
-  assert.deepEqual(resolved.initialIdentityBinding,{...original,status:'skipped',resolution:'collection_only',resolvedAt:new Date(NOW).toISOString(),originalStatus:'conflict'});
+  assert.deepEqual(resolved.initialIdentityBinding,original);
   const after=await f.dashboard();
   for(const key of ['accounts','transactions','teams','identities','employees','departments'])assert.deepEqual(after[key],before[key],key);
   assert.deepEqual((await (await post({admin:true})).json()).initialIdentityBinding,resolved.initialIdentityBinding);
-  assert.equal((await f.request(`/api/installations/${owner.id}/skip-initial-binding`,{method:'POST',admin:true,body:{}})).status,409);
+  assert.equal((await f.request(`/api/installations/${owner.id}/skip-initial-binding`,{method:'POST',admin:true,body:{}})).status,200);
   assert.equal((await f.request('/api/installations/missing-device/skip-initial-binding',{method:'POST',admin:true,body:{}})).status,404);
   assert.equal((await f.request('/api/installations/invalid%2Fid/skip-initial-binding',{method:'POST',admin:true,body:{}})).status,400);
   assert.equal((await f.request(`/api/installations/${borrower.id}`,{method:'PATCH',admin:true,body:{employeeId:owner.employeeId}})).status,409);
   assert.equal((await f.ingest(borrower,[observed('later-own')],[],{observedAt:snapshot.observedAt,loginIdentity:{platformUserId:'later-own',displayName:'后来账号'}})).status,200);
-  const latest=await f.dashboard();assert.equal(latest.identities.find(item=>item.platformUserId==='1001').employeeId,owner.employeeId);
+  const latest=await f.dashboard();assert.equal(latest.identities.find(item=>item.platformUserId==='1001').employeeId,null);
   assert.equal(latest.identities.find(item=>item.platformUserId==='later-own').employeeId,null);
   const pending=await f.installation('collector','员工丙');
   const pendingResponse=await f.request(`/api/installations/${pending.id}/skip-initial-binding`,{method:'POST',admin:true,body:{}});
-  assert.equal(pendingResponse.status,200);assert.equal((await pendingResponse.json()).initialIdentityBinding.originalStatus,'pending');
+  assert.equal(pendingResponse.status,200);assert.equal((await pendingResponse.json()).initialIdentityBinding.status,'skipped');
 });
 
 test('diagnostic logs are bounded, private, device scoped and reject free-form sensitive fields',async t=>{
@@ -212,7 +310,7 @@ test('diagnostic logs are bounded, private, device scoped and reject free-form s
   assert.deepEqual((await (await get(b.id)).json()).logs,[]);
   await post(b,[log(119)]);assert.equal((await (await get(b.id)).json()).logs.length,1,'same local event id is isolated per device');
   const replacement=await f.employee('修改名称');
-  assert.equal((await f.request(`/api/installations/${a.id}`,{method:'PATCH',admin:true,body:{employeeId:replacement.id}})).status,200);
+  assert.equal((await f.request(`/api/installations/${a.id}`,{method:'PATCH',admin:true,body:{employeeId:replacement.id}})).status,409);
   assert.equal((await (await get(a.id)).json()).logs.length,100);
   assert.ok((await f.dashboard()).installations.every(x=>!Object.hasOwn(x,'logs')));
   await f.request(`/api/installations/${a.id}`,{method:'PATCH',admin:true,body:{enabled:false}});
@@ -236,6 +334,25 @@ test('separate observers merge accounts and team balances while keeping member a
   assert.equal((await f.request(`/api/accounts/${encodeURIComponent(id)}`,{method:'PATCH',admin:true,body:{ownerEmployeeId:owner.id,ownerDepartmentId:owner.departmentId}})).status,200);
   await f.ingest(b,[observed('1001',{balance:80})],[],{observedAt:'2026-09-12T09:02:00.000Z'});
   assert.equal((await f.dashboard()).accounts.find(a=>a.id===id).ownerName,'持有人');
+});
+
+test('team archive requires administrator review and survives another collector observation',async t=>{
+  const f=await fixture(t);await f.login();const device=await f.installation();
+  const team=observed('1001',{spaceId:'obsolete-team',spaceType:'team',scope:'team_total',balance:1000});
+  assert.equal((await f.ingest(device,[team],[event('historic-spend',{spaceId:'obsolete-team',scope:'team_total'})])).status,200);
+  const route='/api/teams/obsolete-team/management';
+  assert.equal((await f.request(route,{method:'PATCH',body:{archived:true},headers:{Origin:f.origin}})).status,401);
+  assert.equal((await f.request(route,{method:'PATCH',admin:true,body:{archived:true}})).status,403);
+  assert.equal((await f.request('/api/teams/nonexistent/management',{method:'PATCH',admin:true,body:{archived:true},headers:{Origin:f.origin}})).status,404);
+  const archived=await f.request(route,{method:'PATCH',admin:true,body:{archived:true},headers:{Origin:f.origin}});
+  assert.equal(archived.status,200);
+  assert.equal((await archived.json()).archived,true);
+  assert.equal((await f.ingest(device,[{...team,balance:500}])).status,200);
+  const data=await f.dashboard();
+  assert.equal(data.teamManagement.find(item=>item.spaceId==='obsolete-team').archived,true);
+  assert.equal(data.transactions.find(item=>item.eventId==='historic-spend').amount,-20);
+  const restored=await f.request(route,{method:'PATCH',admin:true,body:{archived:false},headers:{Origin:f.origin}});
+  assert.equal((await restored.json()).archived,false);
 });
 
 test('ledger deduplication preserves refunds and never attributes history to its uploader',async t=>{

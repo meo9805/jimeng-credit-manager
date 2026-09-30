@@ -34,7 +34,8 @@ export function number(value, label, optional = true) {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e12) fail(`${label}必须是有效数值`);
   return value;
 }
-const diagnosticCodes=new Set(['collector_started','collection_started','collection_completed','collection_partial','collection_failed','upload_failed','upload_recovered','connection_failed','connection_recovered','configuration_invalid','command_failed','operation_saved','operation_uploaded','operation_upload_failed','operation_save_failed','operation_queue_full','operation_bridge_full']);
+const diagnosticCodes=new Set(['collector_started','collection_started','collection_completed','collection_partial','collection_failed','upload_failed','upload_recovered','connection_failed','connection_recovered','configuration_invalid','command_failed','operation_saved','operation_uploaded','operation_upload_failed','operation_rejected','operation_save_failed','operation_queue_full','operation_bridge_full']);
+for (const code of ['page_not_ready','page_login_required','account_context_changed','credit_api_unavailable','credit_balance_unavailable','credit_history_partial','team_discovery_partial','account_read_recovered','source_capture_partial']) diagnosticCodes.add(code);
 export function validateDiagnostics(input,now) {
   shape(input,['logs'],'排障日志');
   if(!Array.isArray(input.logs)||input.logs.length>50)fail('每次最多上报 50 条排障日志');
@@ -72,6 +73,43 @@ export function transactionId(account, eventId) {
 }
 const accountKeys = ['platformUserId', 'spaceId', 'spaceType', 'scope', 'displayName', 'spaceName', 'balance', 'giftBalance', 'purchaseBalance', 'subscriptionBalance', 'expiresAt', 'lastSyncedAt', 'membershipPlan', 'billingCycle', 'membershipExpiresAt', 'nextRenewalAt', 'subscriptionObservedAt', 'creditBatches', 'creditBatchesComplete'];
 const transactionKeys = ['platformUserId', 'spaceId', 'scope', 'eventId', 'occurredAt', 'kind', 'amount', 'description', 'chargedPlatformUserId', 'platformSubmitId'];
+const creditHistoryFactKeys = ['historyId', 'historyType', 'amount', 'title', 'createTime', 'status', 'teamId', 'userId', 'submitId'];
+const subscriptionFactKeys = ['spaceType', 'loginUserId', 'teamId', 'readAt', 'active', 'planLevel', 'productId', 'subscribeCycle', 'cycleUnit', 'startTime', 'endTime', 'nextRenewalTime'];
+const creditSourceNames = new Set(['user_credit', 'user_credit_history', 'user_info', 'team_info', 'team_member_list']);
+const blockedSourceKey = /authorization|cookie|session|password|passwd|token|secret|authkey|apikey|privatekey|signature|csrf|signinfo|credential|captcha|ticket|prompt|image|video|avatar|cover|media|fileurl|asseturl|downloadurl/;
+const credentialValue = /(?:cookie|sessionid|sid_tt|authorization|bearer|password|api[_-]?key|access_token|refresh_token|authkey)\s*[:=]|https?:\/\/|\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b/i;
+function validateCreditSourcePayload(payload) {
+  if (payload === null || typeof payload !== 'object') fail('平台响应摘要必须是对象或列表');
+  let nodes = 0;
+  const walk = (value, depth) => {
+    // A source wrapper and nested platform records each add a level.
+    if (++nodes > 5000 || depth > 8) fail('平台响应摘要层级过深');
+    if (value === null || typeof value === 'boolean') return value;
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value) || Math.abs(value) > 1e16) fail('平台响应摘要数值不正确');
+      return value;
+    }
+    if (typeof value === 'string') {
+      if (value.length > 1000 || /[\u0000-\u001f\u007f]/u.test(value) || credentialValue.test(value)) fail('平台响应摘要文字不安全');
+      return value;
+    }
+    if (Array.isArray(value)) {
+      if (value.length > 200) fail('平台响应摘要列表过长');
+      return value.map(item => walk(item, depth + 1));
+    }
+    if (!value || typeof value !== 'object' || Object.keys(value).length > 100) fail('平台响应摘要对象过大');
+    const entries = Object.entries(value).map(([key,item]) => {
+      const normalized = key.replace(/[^a-z]/gi,'').toLowerCase();
+      if (!key || key.length > 100 || /[\u0000-\u001f\u007f]/u.test(key) ||
+          ['__proto__','prototype','constructor'].includes(key) || blockedSourceKey.test(normalized)) fail('平台响应摘要含不允许的字段');
+      return [key,walk(item,depth + 1)];
+    });
+    return Object.fromEntries(entries);
+  };
+  const result = walk(payload, 0);
+  if (Buffer.byteLength(JSON.stringify(result),'utf8') > 128 * 1024) fail('单条平台响应摘要过大');
+  return result;
+}
 const teamKeys = ['spaceId', 'name', 'creatorPlatformUserId', 'creatorDisplayName', 'membershipPlan', 'membershipExpiresAt', 'totalBalance', 'allocatableBalance', 'totalSeats', 'availableSeats', 'membersComplete', 'members', 'observedAt'];
 const teamMemberKeys = ['platformUserId', 'displayName', 'role', 'usedCredits', 'balance', 'joinedAt'];
 function nonNegativeNumber(value, label, integer = false) {
@@ -119,10 +157,99 @@ function validateTeam(item, envelopeObservedAt, now) {
   return result;
 }
 export function validateIngest(input, now) {
-  shape(input, ['observedAt', 'accounts', 'transactions', 'teams', 'status', 'message', 'loginIdentity', 'operationEvidence'], '采集数据');
+  shape(input, ['observedAt', 'accounts', 'transactions', 'teams', 'status', 'message', 'loginIdentity', 'operationEvidence', 'creditHistoryFacts', 'subscriptionFacts', 'creditSourceFacts'], '采集数据');
   const observedAt = iso(input.observedAt, '采集时间', now);
   if (!Array.isArray(input.accounts) || input.accounts.length > 100) fail('账号列表不得超过 100 条');
   if (!Array.isArray(input.transactions) || input.transactions.length > 1000) fail('流水列表不得超过 1000 条');
+  const factInputs = input.creditHistoryFacts === undefined ? [] : input.creditHistoryFacts;
+  if (!Array.isArray(factInputs) || factInputs.length > 30) fail('积分事实批次不得超过 30 组');
+  const factId = (value, label) => value == null || value === '' ? null
+    : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : string(value, label, 160);
+  const factScalar = (value, label, max = 64) => value == null || value === '' ? null
+    : typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e16 ? value
+    : string(value, label, max);
+  let rejectedFacts = 0;
+  const creditHistoryFacts = [];
+  for (const group of factInputs) {
+    if (!group || typeof group !== 'object' || Array.isArray(group) || !Array.isArray(group.records) || group.records.length > 100) fail('积分事实每组不得超过 100 条');
+    let context;
+    try {
+      shape(group, ['context', 'records'], '积分事实组');
+      shape(group.context, ['loginUserId', 'queryScope', 'teamId', 'readAt'], '积分事实来源');
+      const queryScope = group.context.queryScope;
+      if (!['personal', 'team_member', 'team_total'].includes(queryScope)) fail('积分事实查询范围不正确');
+      const loginUserId = identifier(group.context.loginUserId, '积分事实登录账号 ID');
+      const teamId = group.context.teamId == null ? null : identifier(group.context.teamId, '积分事实团队 ID');
+      if ((queryScope === 'personal') !== (teamId === null)) fail('积分事实查询范围与团队 ID 不一致');
+      context = { loginUserId, queryScope, teamId, readAt:iso(group.context.readAt, '积分事实采集时间', now) };
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      rejectedFacts += group.records.length;
+      continue;
+    }
+    const records = [];
+    for (const item of group.records) {
+      try {
+        shape(item, creditHistoryFactKeys, '积分事实');
+        const record = {
+          historyId:factId(item.historyId, '平台流水 ID'), historyType:factScalar(item.historyType, '平台流水类型'),
+          amount:factScalar(item.amount, '平台积分数值'), title:string(item.title, '平台流水标题', 160, true),
+          createTime:factScalar(item.createTime, '平台流水时间'), status:string(item.status, '平台流水状态', 80, true),
+          teamId:factId(item.teamId, '平台流水团队 ID'), userId:factId(item.userId, '平台流水用户 ID'),
+          submitId:factId(item.submitId, '平台提交 ID'),
+        };
+        if (Object.values(record).every(value => value === null)) fail('积分事实没有可用字段');
+        records.push(record);
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        rejectedFacts++;
+      }
+    }
+    if (records.length) creditHistoryFacts.push({context, records});
+  }
+  const subscriptionInputs = input.subscriptionFacts === undefined ? [] : input.subscriptionFacts;
+  if (!Array.isArray(subscriptionInputs) || subscriptionInputs.length > 30) fail('订阅事实不得超过 30 条');
+  let rejectedSubscriptionFacts = 0;
+  const subscriptionFacts = [];
+  for (const item of subscriptionInputs) {
+    try {
+      shape(item, subscriptionFactKeys, '订阅事实');
+      if (!['personal', 'team'].includes(item.spaceType)) fail('订阅空间类型不正确');
+      const teamId = item.teamId == null ? null : identifier(item.teamId, '订阅团队 ID');
+      if ((item.spaceType === 'personal') !== (teamId === null)) fail('订阅空间类型与团队 ID 不一致');
+      if (item.active != null && typeof item.active !== 'boolean') fail('订阅有效状态必须是布尔值');
+      subscriptionFacts.push({
+        spaceType:item.spaceType,loginUserId:identifier(item.loginUserId,'订阅登录账号 ID'),teamId,
+        readAt:iso(item.readAt,'订阅事实采集时间',now),active:item.active??null,
+        planLevel:factScalar(item.planLevel,'订阅等级'),productId:factId(item.productId,'订阅商品 ID'),
+        subscribeCycle:factScalar(item.subscribeCycle,'订阅周期'),cycleUnit:factScalar(item.cycleUnit,'订阅周期单位'),
+        startTime:factScalar(item.startTime,'订阅开始时间'),endTime:factScalar(item.endTime,'订阅结束时间'),
+        nextRenewalTime:factScalar(item.nextRenewalTime,'订阅下次续费时间'),
+      });
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      rejectedSubscriptionFacts++;
+    }
+  }
+  const sourceInputs = input.creditSourceFacts === undefined ? [] : input.creditSourceFacts;
+  if (!Array.isArray(sourceInputs) || sourceInputs.length > 16) fail('平台响应摘要不得超过 16 条');
+  let rejectedCreditSourceFacts = 0;
+  const creditSourceFacts = [];
+  for (const item of sourceInputs) {
+    try {
+      shape(item, ['source','loginUserId','teamId','queryScope','readAt','payload'], '平台响应摘要');
+      if (!creditSourceNames.has(item.source)) fail('平台响应来源不正确');
+      if (!['personal','team_member','team_total'].includes(item.queryScope)) fail('平台响应查询范围不正确');
+      const teamId = item.teamId == null ? null : identifier(item.teamId, '平台响应团队 ID');
+      if ((item.queryScope === 'personal') !== (teamId === null)) fail('平台响应查询范围与团队 ID 不一致');
+      creditSourceFacts.push({source:item.source,loginUserId:identifier(item.loginUserId,'平台响应登录账号 ID'),
+        teamId,queryScope:item.queryScope,readAt:iso(item.readAt,'平台响应采集时间',now),
+        payload:validateCreditSourcePayload(item.payload)});
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      rejectedCreditSourceFacts++;
+    }
+  }
   const teamInputs = input.teams === undefined ? [] : input.teams;
   if (!Array.isArray(teamInputs) || teamInputs.length > 100) fail('团队列表不得超过 100 条');
   const teams = teamInputs.map(item => validateTeam(item, observedAt, now));
@@ -206,7 +333,10 @@ export function validateIngest(input, now) {
       occurredAt: iso(item.occurredAt, '流水发生时间', now), kind, amount,
       description: string(item.description, '流水说明', 160, true) ?? ({consume:'生成扣费',refund:'积分返还',grant:'积分到账',expire:'积分过期',adjustment:'积分调整'}[kind]) };
   });
-  return { observedAt, accounts, transactions, teams, status, message: string(input.message, '采集说明', 240, true),...(loginIdentity?{loginIdentity}:{}),...(own(input,'operationEvidence')?{operationEvidence}:{}) };
+  return { observedAt, accounts, transactions, teams, status, message: string(input.message, '采集说明', 240, true),...(loginIdentity?{loginIdentity}:{}),...(own(input,'operationEvidence')?{operationEvidence}:{}),
+    ...(own(input,'creditHistoryFacts')?{creditHistoryFacts,rejectedFacts}:{}),
+    ...(own(input,'subscriptionFacts')?{subscriptionFacts,rejectedSubscriptionFacts}:{}),
+    ...(own(input,'creditSourceFacts')?{creditSourceFacts,rejectedCreditSourceFacts}:{}) };
 }
 export function validateInstallation(input, patch = false) {
   shape(input, patch ? ['employeeId', 'role', 'enabled'] : ['employeeId', 'role'], '设备配置');

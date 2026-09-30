@@ -36,3 +36,24 @@ test('team grant space IDs are not people; member IDs remain intact', () => {
   assert.equal(got.transactions[0].chargedPlatformUserId,null);
   assert.equal(got.transactions[1].chargedPlatformUserId,'member-123');
 });
+test('credit event and submit IDs accepted by the server are not dropped in the collector', () => {
+  const got=normalizeObservation({...base(),records:[row({historyId:'credit.event-1',submitId:'task.1@jimeng'})]});
+  assert.equal(got.transactions.length,1);
+  assert.equal(got.transactions[0].eventId,'credit.event-1');
+  assert.equal(got.transactions[0].platformSubmitId,'task.1@jimeng');
+});
+test('raw credit facts retain unclassified and foreign-account rows without attributing them', () => {
+  const got=normalizeObservation({...base(),records:[row({historyId:12345,submitId:67890,historyType:9,amount:-7,
+    userId:'another-account',title:'平台新类型',status:'Unknown'})]});
+  assert.equal(got.transactions.length,0);
+  assert.deepEqual(got.creditHistoryFacts[0].context,{loginUserId:'10001',queryScope:'personal',teamId:null,readAt:got.observedAt});
+  assert.deepEqual(got.creditHistoryFacts[0].records[0],{historyId:'12345',submitId:'67890',historyType:9,
+    amount:-7,createTime:got.creditHistoryFacts[0].records[0].createTime,userId:'another-account',teamId:null,
+    title:'平台新类型',status:'Unknown'});
+});
+test('raw credit facts do not include unrelated page response fields', () => {
+  const got=normalizeObservation({...base(),records:[row({prompt:'private prompt',cookie:'secret',assetUrl:'https://example.test/a'})]});
+  assert.equal('prompt' in got.creditHistoryFacts[0].records[0],false);
+  assert.equal('cookie' in got.creditHistoryFacts[0].records[0],false);
+  assert.equal('assetUrl' in got.creditHistoryFacts[0].records[0],false);
+});

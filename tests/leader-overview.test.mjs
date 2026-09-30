@@ -14,6 +14,135 @@ const transaction = (key, extra = {}) => ({ id: key, eventId: key, accountId: 'p
 const matched = (who = 'a') => ({ attribution: 'matched', operatorEmployeeId: who, operatorName: who === 'a' ? '甲' : '乙', operatorDepartmentId: who === 'a' ? 'd1' : 'd2', operatorDepartment: who === 'a' ? '一部' : '二部' });
 const calculate = extra => buildLeaderOverview({ employees, departments, identities, accounts, now, ...extra });
 const row = (result, key) => result.rows.find(value => value.employeeId === key);
+const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} != ${expected}`);
+const referenceRate = (who, perThousand, effectiveAt = '1970-01-01T00:00:00.000Z') => ({ id: `${who}:${effectiveAt}`, walletKey: `personal:u${who}`, perThousand, effectiveAt, createdAt: effectiveAt });
+
+test('historical reference amounts do not follow current balance, plan or batch mix', () => {
+  const referenceRates = [referenceRate('a', 60)];
+  const transactions = [transaction('charge', { ...matched('b') }), transaction('expired', { kind: 'expire', amount: -30, expiryCreditKind: 'subscription' })];
+  for (const kind of ['gift', 'purchase', 'subscription']) {
+    const result = calculate({ accounts: [personal('a', { membershipPlan: '高级会员', billingCycle: '连续包月', creditBatches: [{ kind, amount: 500 }] })], referenceRates, transactions });
+    assert.equal(result.summary.money.netConsumption, 6);
+    assert.equal(result.summary.money.expiry, 1.8);
+    assert.equal(row(result, 'b').money.operatorConsumption, 6);
+    assert.equal(row(result, 'a').money.lentConsumption, 6);
+  }
+});
+
+test('operator, owner and borrowing use the charged wallet reference independently', () => {
+  const result = calculate({ referenceRates: [referenceRate('a', 50), referenceRate('b', 100)], transactions: [
+    transaction('a-own', { ...matched('a'), amount: -100 }),
+    transaction('a-borrow', { ...matched('a'), accountId: 'pb', chargedPlatformUserId: 'ub', ownershipSnapshot: owner('b'), amount: -200 }),
+    transaction('b-borrow', { ...matched('b'), amount: -50 }),
+  ] });
+  assert.equal(row(result, 'a').money.consumption, 7.5);
+  assert.equal(row(result, 'a').money.operatorConsumption, 25);
+  assert.equal(row(result, 'a').money.grossOperatorConsumption, 25);
+  assert.equal(row(result, 'a').grossOperatorConsumption, 300);
+  assert.equal(row(result, 'a').money.borrowedConsumption, 20);
+  assert.equal(row(result, 'a').borrowedFrom[0].money, 20);
+  assert.equal(row(result, 'b').money.lentConsumption, 20);
+  assert.equal(result.summary.money.borrowedConsumption, 22.5);
+});
+
+test('a new reference revision never reprices a refund or a previous-period charge', () => {
+  const old = transaction('old', { ...matched('b'), occurredAt: '2026-08-20T06:00:00Z' });
+  const result = calculate({ referenceRates: [referenceRate('a', 50), referenceRate('a', 100, '2026-09-01T00:00:00Z')], transactions: [
+    old, transaction('refund', { kind: 'refund', amount: 40, platformSubmitId: old.platformSubmitId }),
+    transaction('new', { ...matched('b'), amount: -10 }),
+  ] });
+  assert.equal(result.summary.money.netConsumption, -1);
+  assert.equal(result.summary.money.linkedRefunds, 2);
+  assert.equal(row(result, 'b').money.operatorConsumption, -1);
+  assert.equal(row(result, 'b').money.operatorRefunds, 2);
+  assert.equal(row(result, 'b').operatorRefunds, 40);
+  assert.deepEqual(row(result, 'b').transactionIds.operatorRefund, ['refund']);
+  assert.equal(row(result, 'a').money.linkedRefunds, 2);
+});
+
+test('prior-period refunds and repeated refunds cannot exceed the charged credits', () => {
+  const debit = transaction('old', { ...matched('b'), occurredAt: '2026-08-20T06:00:00Z' });
+  const refund = (key, amount, occurredAt) => transaction(key, { kind: 'refund', amount, occurredAt, platformSubmitId: debit.platformSubmitId });
+  const result = calculate({ referenceRates: [referenceRate('a', 50)], transactions: [
+    refund('over', 50, '2026-09-02T00:00:00Z'), debit, refund('before', 80, '2026-08-25T00:00:00Z'), refund('again', 10, '2026-09-03T00:00:00Z'),
+  ] });
+  assert.equal(result.summary.linkedRefunds, 20);
+  assert.equal(result.summary.unmatchedRefunds, 40);
+  assert.equal(result.summary.money.linkedRefunds, 1);
+  assert.equal(row(result, 'b').operatorRefunds, 20);
+});
+
+test('mixed-rate partial refunds prorate original charges and full refunds cancel their value', () => {
+  const first = transaction('early', { ...matched('b'), platformSubmitId: 'same', occurredAt: '2026-09-01T00:00:00Z' });
+  const second = transaction('late', { ...matched('b'), platformSubmitId: 'same', occurredAt: '2026-09-10T00:00:00Z' });
+  const refund = amount => transaction('refund', { kind: 'refund', amount, platformSubmitId: 'same', occurredAt: '2026-09-11T00:00:00Z' });
+  const referenceRates = [referenceRate('a', 50), referenceRate('a', 100, '2026-09-05T00:00:00Z')];
+  const full = calculate({ referenceRates, transactions: [first, second, refund(200)] });
+  assert.equal(full.summary.money.linkedRefunds, 15);
+  assert.equal(full.summary.money.netConsumption, 0);
+  const partial = calculate({ referenceRates, transactions: [first, second, refund(50)] });
+  assert.equal(partial.summary.linkedRefunds, 50);
+  assert.equal(partial.summary.money.linkedRefunds, 3.75);
+  assert.equal(partial.summary.money.netConsumption, 11.25);
+  assert.equal(row(partial, 'b').money.operatorRefunds, 3.75);
+  assert.equal(row(partial, 'b').money.operatorConsumption, 11.25);
+  assert.equal(partial.summary.moneyUnpricedByField.linkedRefunds, undefined);
+  assert.equal(row(partial, 'b').moneyUnpricedByField.operatorRefunds, undefined);
+  const repeated = calculate({ referenceRates, transactions: [first, second, refund(50),
+    { ...refund(200), id: 'refund-rest', eventId: 'refund-rest', occurredAt: '2026-09-12T00:00:00Z' },
+  ] });
+  assert.equal(repeated.summary.linkedRefunds, 200);
+  assert.equal(repeated.summary.unmatchedRefunds, 50);
+  assert.equal(repeated.summary.money.linkedRefunds, 15);
+  assert.equal(repeated.summary.money.netConsumption, 0);
+  assert.equal(row(repeated, 'b').money.operatorConsumption, 0);
+});
+
+test('a later charge on a partially refunded task retains only the unrefunded original value', () => {
+  const charge = (id, occurredAt) => transaction(id, { ...matched('b'), platformSubmitId: 'same', occurredAt });
+  const refund = (id, amount, occurredAt) => transaction(id, { kind: 'refund', amount, platformSubmitId: 'same', occurredAt });
+  const referenceRates = [referenceRate('a', 50), referenceRate('a', 100, '2026-09-05T00:00:00Z')];
+  const transactions = [
+    charge('old', '2026-09-01T00:00:00Z'), refund('early-refund', 50, '2026-09-02T00:00:00Z'),
+    charge('new', '2026-09-10T00:00:00Z'), refund('later-partial', 60, '2026-09-11T00:00:00Z'),
+  ];
+  const partial = calculate({ referenceRates, transactions });
+  assert.equal(partial.summary.linkedRefunds, 110);
+  assert.equal(partial.summary.money.linkedRefunds, 7.5, 'the second refund returns 60 / 150 of the remaining 12.5 yuan');
+  assert.equal(partial.summary.money.netConsumption, 7.5);
+  const result = calculate({ referenceRates, transactions: [...transactions, refund('remaining', 90, '2026-09-12T00:00:00Z')] });
+  assert.equal(result.summary.linkedRefunds, 200);
+  assert.equal(result.summary.money.linkedRefunds, 15);
+  assert.equal(result.summary.money.netConsumption, 0);
+  assert.equal(row(result, 'a').money.lentConsumption, 0);
+  assert.equal(row(result, 'b').money.borrowedConsumption, 0);
+});
+
+test('missing plan prices automatically estimate every visible metric using the charged wallet', () => {
+  const result = calculate({ referenceRates: [referenceRate('a', 50)], transactions: [
+    transaction('priced', { ...matched('a'), amount: -100 }),
+    transaction('unknown', { ...matched('a'), accountId: 'pb', chargedPlatformUserId: 'ub', ownershipSnapshot: owner('b'), amount: -200 }),
+  ] });
+  assert.equal(row(result, 'a').money.operatorConsumption, 25);
+  assert.equal(row(result, 'a').moneyUnpricedByField.operatorConsumption, undefined);
+  assert.equal(row(result, 'a').money.borrowedConsumption, 20);
+  assert.equal(row(result, 'a').moneyUnpricedByField.borrowedConsumption, undefined);
+  assert.equal(row(result, 'a').borrowedFrom[0].money, 20);
+  assert.equal(row(result, 'a').borrowedFrom[0].unpricedCredits, 0);
+  assert.equal(row(result, 'b').money.balance, 50);
+  assert.equal(row(result, 'b').moneyUnpricedByField.balance, undefined);
+  assert.equal(result.summary.money.netConsumption, 25);
+  assert.equal(result.summary.moneyUnpricedByField.netConsumption, undefined);
+});
+
+test('unknown balances remain missing while readable zero balances receive zero value', () => {
+  const result = calculate({ accounts: [personal('a', { balance: null }), personal('b', { balance: 0 })], transactions: [] });
+  assert.equal(row(result, 'a').balance, null);
+  assert.equal(row(result, 'a').money.balance, undefined);
+  assert.equal(row(result, 'b').balance, 0);
+  assert.equal(row(result, 'b').money.balance, 0);
+  assert.equal(result.summary.unknownBalanceCount, 1);
+});
 
 test('China calendar ranges include today, trailing seven days, clipped custom days, and reject invalid dates', () => {
   const month = overviewRange({ now });
@@ -72,6 +201,9 @@ test('normal team member use belongs to the member, while duplicate pool and mem
   assert.equal(row(result, 'a').ownedConsumption, null);
   assert.equal(result.summary.availableBalance, 1000);
   assert.equal(row(result, 'b').balance, 200);
+  near(result.summary.money.netConsumption, 100 * 6319 / 68250);
+  near(result.summary.money.availableBalance, 1000 * 6319 / 68250);
+  near(row(result, 'b').money.balance, 200 * 6319 / 68250);
 });
 
 test('task-linked refunds retain charge ownership and operator, including refunds for an earlier period', () => {
@@ -123,15 +255,17 @@ test('ownership snapshots survive reassignments, explicit unknown does not fall 
   assert.equal(calculate({ transactions: [legacy] }).summary.legacyOwnershipAmount, 100);
 });
 
-test('only actual expiry rows count, source remains unclassified and team pool expiry is not blamed on its creator', () => {
+test('only paid expiry counts as waste; free and unsupported sources stay outside leader totals', () => {
   const pool = { id: 'pool', scope: 'team_total', spaceId: 'team', platformUserId: 'ua', ownerEmployeeId: 'a', ownerDepartmentId: 'd1', balance: 1000, lastSyncedAt: recent };
   const result = calculate({ accounts: [personal('a', { creditBatches: [{ kind: 'gift', amount: 30, expiresAt: '2026-09-10T00:00:00Z' }] }), pool], transactions: [
-    transaction('gift-expiry', { kind: 'expire', amount: -30, description: '每日免费积分清零', creditKind: 'gift' }),
-    transaction('pool-expiry', { kind: 'expire', amount: -1000, accountId: 'pool', chargedPlatformUserId: null, ownershipSnapshot: { employeeId: null, basis: 'effective' } }),
+    transaction('gift-expiry', { kind: 'expire', amount: -30, description: '每日免费积分清零', expiryCreditKind: 'gift' }),
+    transaction('unknown-expiry', { kind: 'expire', amount: -80 }),
+    transaction('pool-expiry', { kind: 'expire', amount: -1000, expiryCreditKind: 'subscription', accountId: 'pool', chargedPlatformUserId: null, ownershipSnapshot: { employeeId: null, basis: 'effective' } }),
     transaction('grant', { kind: 'grant', amount: 500 }), transaction('adjust', { kind: 'adjustment', amount: -10 }),
   ] });
-  assert.deepEqual(result.summary.expiry, { total: 1030, paid: 0, gift: 0, unclassified: 1030 });
-  assert.equal(row(result, 'a').expiry.total, 30);
+  assert.deepEqual(result.summary.expiry, { total: 1000, paid: 1000, gift: 0, unclassified: 0 });
+  assert.equal(row(result, 'a').expiry.total, 0);
+  assert.deepEqual(result.summary.transactionIds.expiry, ['pool-expiry']);
   assert.equal(result.unassigned.expiry.total, 1000);
   assert.equal(result.summary.netConsumption, 0);
   assert.equal(result.summary.expiringAmount, 0);
@@ -161,6 +295,36 @@ test('fresh personal and member balances are summed per person, company pools on
   assert.equal(onlyMember.summary.availableBalance, null);
   assert.equal(onlyMember.summary.balancePartial, true);
   assert.equal(row(onlyMember, 'a').balance, 50);
+});
+
+test('leadership balances retain the latest report across days and replace it without duplicating team quotas', () => {
+  const old = '2026-09-10T05:00:00Z';
+  const fixture = {
+    accounts: [personal('a', { balance: 600, lastSyncedAt: old, creditBatches: [
+      { kind: 'gift', amount: 100, expiresAt: '2026-09-18T15:59:59Z' },
+      { kind: 'purchase', amount: 500, expiresAt: '2026-09-12T15:59:59Z' },
+    ] }), personal('b', { balance: null }),
+    { id: 'pool', scope: 'team_total', spaceId: 'team', balance: 1000, lastSyncedAt: old, ownerDepartmentId: 'd1' },
+    { id: 'member', scope: 'team_member', spaceId: 'team', platformUserId: 'ua', balance: 200, lastSyncedAt: old }],
+    referenceRates: [referenceRate('a', 100), { walletKey: 'team:team', perThousand: 100, effectiveAt: '1970-01-01T00:00:00Z' }],
+    transactions: [transaction('charge')],
+  };
+  const operations = calculate(fixture);
+  assert.equal(operations.summary.availableBalance, null, 'administration retains the freshness check');
+  const result = calculate({ ...fixture, useLastKnownBalances: true });
+  assert.equal(result.summary.availableBalance, 1600, 'company counts the pool once, not the member quota again');
+  assert.equal(result.summary.wallets.length, 2);
+  near(result.summary.money.availableBalance, 150);
+  assert.equal(row(result, 'a').balance, 800);
+  near(row(result, 'a').money.balance, 70);
+  assert.equal(row(result, 'b').balance, null, 'an unread balance is not invented');
+  assert.equal(row(result, 'a').operatorConsumption, null, 'old balance retention does not invent operation proof');
+  assert.equal(result.summary.netConsumption, operations.summary.netConsumption);
+  assert.equal(result.summary.expiringAmount, 0, 'free future batches and already-expired paid batches are excluded');
+  const updated = calculate({ ...fixture, useLastKnownBalances: true, accounts: [...fixture.accounts,
+    personal('a', { id: 'new-personal-view', balance: 400, lastSyncedAt: recent })] });
+  assert.equal(updated.summary.availableBalance, 1400, 'a new report replaces the previous snapshot');
+  assert.equal(row(updated, 'a').balance, 600);
 });
 
 test('a viewer clock behind the server still counts just-synced balances, while real age still expires', () => {
@@ -196,6 +360,93 @@ test('future seven-day expiry sums observed batches separately from estimates an
   assert.equal(row(result, 'a').estimatedExpiringAmount, 200);
   assert.equal(row(result, 'a').dueBatches.length, 2);
   assert.equal(row(result, 'a').dueBatches.filter(batch => batch.estimated).length, 1);
+});
+
+test('top-card expiry detail contains the exact fresh official batches and boundary dates, with employee-first metadata', () => {
+  const end = new Date(now + 7 * 86_400_000).toISOString();
+  const candidate = personal('a', { displayName: '平台昵称', balance: 140, creditBatches: [
+    { id: 'membership', kind: 'subscription', amount: 100, expiresAt: '2026-09-20T06:00:00Z' },
+    { id: 'gift', kind: 'gift', amount: 20, expiresAt: end },
+    { id: 'old', kind: 'purchase', amount: 10, expiresAt: new Date(now).toISOString() },
+    { id: 'future', kind: 'purchase', amount: 10, expiresAt: new Date(now + 7 * 86_400_000 + 1).toISOString() },
+  ] });
+  const result = calculate({ referenceRates: [referenceRate('a', 50)], accounts: [
+    candidate, { ...candidate, id: 'older-observation', balance: 999, lastSyncedAt: '2026-09-15T05:00:00Z' },
+    personal('b', { lastSyncedAt: '2026-09-15T05:00:00Z', creditBatches: [{ kind: 'purchase', amount: 80, expiresAt: end }] }),
+  ] });
+  assert.equal(result.summary.wallets.length, 1);
+  assert.equal(result.summary.wallets[0].employeeName, '甲');
+  assert.equal(result.summary.wallets[0].displayName, '平台昵称');
+  assert.equal(result.summary.wallets[0].balance, result.summary.availableBalance);
+  assert.equal(result.summary.wallets[0].referenceValue, result.summary.money.availableBalance);
+  assert.equal(result.summary.dueBatches.length, 1);
+  assert.equal(result.summary.dueBatches.reduce((sum, item) => sum + item.amount, 0), result.summary.expiringAmount);
+  assert.ok(!result.summary.dueBatches.some(item => item.kind === 'gift'));
+  assert.ok(!row(result, 'a').dueBatches.some(item => item.kind === 'gift'));
+  assert.equal(result.summary.dueBatches.find(item => item.kind === 'subscription').referenceValue, 5);
+});
+
+test('roster-derived company balances use the chosen snapshot, preserve labels and never duplicate member quotas', () => {
+  const older = { id: 'pool', scope: 'team_total', spaceId: 'team', platformUserId: 'ub', ownerEmployeeId: 'a', ownerName: '甲', ownerDepartmentId: 'd1',
+    balance: 700, lastSyncedAt: '2026-09-16T05:00:00Z', creditBatches: [{ kind: 'subscription', amount: 700, expiresAt: '2026-09-20T06:00:00Z' }] };
+  const teams = [{ spaceId: 'team', name: '同一个团队', creatorPlatformUserId: 'ua', totalBalance: 500, observedAt: recent, balanceObservedAt: recent,
+    membersComplete: true, members: [{ platformUserId: 'ua', role: 'creator', balance: 100 }, { platformUserId: 'ub', role: 'member', balance: 400 }] }];
+  const result = calculate({ accounts: [older], teams });
+  assert.equal(result.summary.wallets.length, 1);
+  assert.equal(result.summary.wallets[0].balance, 500);
+  assert.equal(result.summary.availableBalance, 500);
+  assert.equal(result.summary.wallets[0].ownerName, '甲');
+  assert.equal(result.summary.wallets[0].employeeName, '甲');
+  assert.equal(result.summary.wallets[0].spaceName, '同一个团队');
+  near(result.summary.wallets[0].referenceValue, 500 * 6319 / 68250);
+  assert.equal(result.summary.wallets[0].referenceValue, result.summary.money.availableBalance);
+  assert.equal(result.summary.wallets[0].unpricedCredits, 0);
+  assert.equal(result.summary.dueBatches.length, 0, 'new roster balance must not inherit old batches');
+  assert.equal(result.summary.expiringAmount, 0);
+  assert.equal(row(result, 'b').balance, 400);
+  const unverified = calculate({ accounts: [{ ...older, ownerEmployeeId: null, ownerName: null, lastSyncedAt: recent }], teams: [] });
+  assert.equal(unverified.summary.wallets[0].employeeName, null, 'the collector login is not proof of team ownership');
+});
+
+test('an unchanged team balance keeps its estimated expiry when the roster snapshot becomes newer', () => {
+  const expiry = { rule: 'team_subscription_month', grantedAt: '2026-08-20T06:00:00Z', expiresAt: '2026-09-20T06:00:00Z' };
+  const account = { id: 'pool', scope: 'team_total', spaceId: 'team', platformUserId: 'ua', balance: 700,
+    subscriptionBalance: 700, lastSyncedAt: '2026-09-17T05:00:00.000Z', creditExpiryEstimate: expiry };
+  const team = { spaceId: 'team', name: '团队', creatorPlatformUserId: 'ua', totalBalance: 700,
+    observedAt: '2026-09-17T05:00:00.001Z', balanceObservedAt: '2026-09-17T05:00:00.001Z', members: [] };
+  const before = calculate({ accounts: [account], teams: [{ ...team, observedAt: '2026-09-17T04:59:59.999Z', balanceObservedAt: '2026-09-17T04:59:59.999Z' }] });
+  const after = calculate({ accounts: [account], teams: [team] });
+  assert.equal(before.summary.estimatedExpiringAmount, 700);
+  assert.equal(after.summary.estimatedExpiringAmount, 700);
+  assert.equal(after.summary.dueBatches.length, 1);
+  assert.equal(after.summary.wallets[0].balance, 700);
+  const changed = calculate({ accounts: [account], teams: [{ ...team, totalBalance: 500 }] });
+  assert.equal(changed.summary.estimatedExpiringAmount, 0, 'a different balance must not inherit the old estimate');
+});
+
+test('department-filtered top-card details reconcile official and estimated amounts separately', () => {
+  const soon = '2026-09-20T06:00:00Z';
+  const estimate = { expiresAt: soon, grantedAt: '2026-08-20T06:00:00Z', rule: 'team_subscription_month' };
+  const result = calculate({ departmentId: 'd1', accounts: [
+    personal('a', { balance: 100, creditBatches: [{ id: 'gift', kind: 'gift', amount: 100, expiresAt: soon }] }),
+    personal('b', { balance: 50, creditBatches: [{ id: 'gift', kind: 'gift', amount: 50, expiresAt: soon }] }),
+    { id: 'pool', scope: 'team_total', spaceId: 'team', platformUserId: 'ub', ownerEmployeeId: 'a', ownerName: '甲', ownerDepartmentId: 'd1', balance: 1000, subscriptionBalance: 1000, creditExpiryEstimate: estimate, lastSyncedAt: recent },
+    { id: 'member', scope: 'team_member', spaceId: 'team', platformUserId: 'ua', balance: 200, subscriptionBalance: 200, creditExpiryEstimate: estimate, lastSyncedAt: recent },
+  ] });
+  assert.equal(result.summary.wallets.reduce((sum, item) => sum + item.balance, 0), result.summary.availableBalance);
+  assert.equal(result.summary.availableBalance, 1100);
+  const official = result.summary.dueBatches.filter(item => !item.estimated), estimated = result.summary.dueBatches.filter(item => item.estimated);
+  assert.equal(official.reduce((sum, item) => sum + item.amount, 0), result.summary.expiringAmount);
+  assert.equal(estimated.reduce((sum, item) => sum + item.amount, 0), result.summary.estimatedExpiringAmount);
+  assert.equal(result.summary.expiringAmount, 0);
+  assert.equal(result.summary.estimatedExpiringAmount, 1000);
+  assert.equal(estimated[0].kind, 'subscription');
+  assert.equal(estimated[0].ownerName, '甲');
+  near(estimated[0].referenceValue, 1000 * 6319 / 68250);
+  assert.equal(estimated[0].unpricedCredits, 0);
+  assert.equal(official.length, 0);
+  assert.equal(new Set(result.summary.dueBatches.map(item => item.id)).size, result.summary.dueBatches.length);
+  assert.ok(result.summary.dueBatches.every(item => item.scope !== 'team_member'));
 });
 
 test('department filters use owner for spending and operator for borrowing, retaining cross-department counterpart names', () => {
@@ -239,8 +490,8 @@ test('all-period labels start at earliest real observation and empty evidence st
 test('unassigned expiry becomes a table row so the board total reconciles with the summary cards', () => {
   const pool = { id: 'pool', scope: 'team_total', spaceId: 'team', platformUserId: 'ua', ownerEmployeeId: 'a', ownerDepartmentId: 'd1', balance: 1000, lastSyncedAt: recent };
   const result = calculate({ accounts: [personal('a'), pool], transactions: [
-    transaction('owned-expiry', { kind: 'expire', amount: -30 }),
-    transaction('pool-expiry', { kind: 'expire', amount: -1000, accountId: 'pool', chargedPlatformUserId: null, ownershipSnapshot: { employeeId: null, basis: 'effective' } }),
+    transaction('owned-expiry', { kind: 'expire', amount: -30, expiryCreditKind: 'purchase' }),
+    transaction('pool-expiry', { kind: 'expire', amount: -1000, expiryCreditKind: 'subscription', accountId: 'pool', chargedPlatformUserId: null, ownershipSnapshot: { employeeId: null, basis: 'effective' } }),
   ] });
   const orphan = row(result, '__unassigned__');
   assert.ok(orphan, '未归属必须作为一行出现在表格里');

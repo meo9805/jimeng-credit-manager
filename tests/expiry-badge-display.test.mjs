@@ -11,6 +11,7 @@ const bundled=buildSync({entryPoints:[fileURLToPath(new URL('../web/ExpiryBadge.
 const component={exports:{}};
 new Function('require','module','exports',bundled.outputFiles[0].text)(createRequire(import.meta.url),component,component.exports);
 const render=account=>renderToStaticMarkup(createElement(component.exports.ExpiryBadge,{account}));
+const renderCompact=account=>renderToStaticMarkup(createElement(component.exports.ExpiryBadge,{account,compact:true}));
 
 test('fresh team balances with empty batches report unavailable expiry rather than pending synchronization',()=>{
   for(const [scope,balance] of [['team_member',7700],['team_total',21000]]){
@@ -27,6 +28,17 @@ test('known membership and gift batches retain their separate amounts, exact exp
   assert.match(html,/会员 23,272 分 · 9\/28 到期/);assert.match(html,/赠送 30 分 · 9\/15 到期/);
   assert.match(html,/2027年9月28日/);assert.match(html,/2027年9月15日/);
   assert.doesNotMatch(html,/未获取|待同步/);
+});
+
+test('account cards show only the nearest upcoming batch while details retain every batch',t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-09-24T00:00:00+08:00')});
+  const account={creditBatchesComplete:true,creditBatches:[
+    {kind:'subscription',amount:571,expiresAt:'2026-09-28T00:00:00+08:00'},
+    {kind:'gift',amount:80,expiresAt:'2026-09-25T00:00:00+08:00'},
+  ]};
+  assert.match(renderCompact(account),/赠送 80 分 · 9\/25 到期/);
+  assert.doesNotMatch(renderCompact(account),/会员 571 分/);
+  assert.match(render(account),/会员 571 分/);
 });
 
 test('unknown batch dates and missing legacy amounts remain visible without promising another sync',t=>{
@@ -64,8 +76,8 @@ test('official account or subscription expiry overrides an estimate while gift b
 test('estimated expiry remains overdue without rolling forward and does not enter upcoming-only filters',t=>{
   const now=Date.parse('2026-10-15T00:00:00+08:00');t.mock.timers.enable({apis:['Date'],now});
   const account={scope:'team_total',balance:21000,creditExpiryEstimate:teamEstimate};
-  assert.match(render(account),/预计 9\/28 已到期，待更新/);
-  assert.equal(estimatedExpiryLabel(teamEstimate,now,true),'预计 2026/09/28 已到期，待更新');
+  assert.match(render(account),/预计 9\/28 已到期 · 旧读数/);
+  assert.equal(estimatedExpiryLabel(teamEstimate,now,true),'预计 2026/09/28 已到期 · 旧读数');
   assert.equal(creditExpiryDueSoon(account,now),false);
 });
 

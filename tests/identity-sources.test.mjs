@@ -71,7 +71,7 @@ test('setting and clearing ownership updates source fields immediately without c
 test('explicit login without any wallet stays a login observation after the collector and ownership are removed',t=>{
   const f=fixture(t);
   f.collect({loginIdentity:{platformUserId:'login-only',displayName:'首次账号'}});
-  assert.equal(f.store.dashboard().accounts.length,0);assert.deepEqual(f.person('login-only').sources,['login_account','ownership_mapping']);
+  assert.equal(f.store.dashboard().accounts.length,0);assert.deepEqual(f.person('login-only').sources,['login_account']);
   f.store.patchIdentity('login-only',{employeeId:null});
   assert.deepEqual(f.person('login-only').sources,['login_account']);assert.equal(f.person('login-only').historyOnly,false);
   f.store.deleteInstallation(f.device.id);

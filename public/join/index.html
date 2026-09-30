@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="referrer" content="no-referrer" />
+  <title>领取采集端 · 即梦积分管家</title>
+  <link rel="icon" type="image/png" href="./logo.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="./logo.png" alt="" width="34" height="34" /><span>即梦积分管家</span></div>
+    <span class="topbar-side">员工采集端</span>
+  </header>
+
+  <main class="page">
+    <section class="page-intro" aria-labelledby="page-title">
+      <span class="eyebrow">员工入口</span>
+      <h1 id="page-title">领取你的采集端</h1>
+      <p>请在准备安装的 Chrome 或 Edge 中打开此链接，填写姓名和部门。管理员确认后，即可下载你的专属安装包。</p>
+    </section>
+
+    <section class="request-card" aria-labelledby="request-title">
+      <div class="card-head">
+        <span class="card-step">1</span>
+        <div>
+          <h2 id="request-title">登记领取</h2>
+          <p id="request-subtitle">这份安装包专属于你，切换即梦账号无需重新安装。</p>
+        </div>
+      </div>
+
+      <div id="loading-state" class="state-loading" role="status">正在读取申请状态…</div>
+
+      <form id="request-form" class="request-form" hidden novalidate>
+        <div class="fields">
+          <label>姓名<input id="employee-name" name="name" type="text" autocomplete="name" maxlength="40" required placeholder="填写真实姓名" /></label>
+          <label>部门<input id="employee-department" name="department" type="text" autocomplete="off" maxlength="60" required placeholder="例如：教研部" /></label>
+        </div>
+        <p class="field-note">请与公司员工名单保持一致，管理员会据此核对。</p>
+        <button id="submit-request" class="primary-button" type="submit">提交领取申请</button>
+      </form>
+
+      <div id="request-result" class="request-result" hidden>
+        <div class="status-line"><span id="status-mark" class="status-mark" aria-hidden="true"></span><div><h3 id="status-title"></h3><p id="status-description"></p></div></div>
+        <div id="request-person" class="request-person" hidden></div>
+        <div id="result-actions" class="result-actions"></div>
+        <div id="connection-status" class="connection-status" role="status" hidden></div>
+      </div>
+
+      <p id="request-error" class="request-error" role="alert" hidden></p>
+    </section>
+
+    <section class="guide" aria-labelledby="guide-title">
+      <div class="guide-header">
+        <div class="guide-heading"><span class="card-step">2</span><div><h2 id="guide-title">安装到浏览器</h2><p>下载后保留解压文件夹，浏览器会从这里读取插件。</p></div></div>
+        <div class="guide-choices">
+          <div class="segmented" role="group" aria-label="操作系统">
+            <button type="button" data-os="windows" aria-pressed="true">Windows</button>
+            <button type="button" data-os="mac" aria-pressed="false">Mac</button>
+          </div>
+          <div class="segmented" role="group" aria-label="浏览器">
+            <button type="button" data-browser="chrome" aria-pressed="true">Chrome</button>
+            <button type="button" data-browser="edge" aria-pressed="false">Edge</button>
+          </div>
+        </div>
+      </div>
+
+      <ol class="guide-steps">
+        <li class="guide-step">
+          <div class="step-copy"><span class="step-index">01</span><div><h3>完整解压 ZIP</h3><p id="unzip-copy">下载后右键选择“全部解压缩”。不要在 ZIP 预览窗口中安装。</p></div></div>
+          <div class="illustration files-illustration" role="img" aria-label="操作示意：压缩包解压为完整文件夹，文件夹内包含 manifest.json">
+            <span class="illustration-label">操作位置示意</span>
+            <div class="file-route"><div class="file-symbol zip-symbol">ZIP</div><span class="route-arrow" aria-hidden="true">→</span><div class="folder-symbol"><span class="folder-tab"></span><span class="folder-name">即梦采集端</span><span class="folder-content">manifest.json</span></div></div>
+          </div>
+        </li>
+
+        <li class="guide-step">
+          <div class="step-copy"><span class="step-index">02</span><div><h3>切到常用浏览器账号</h3><p>如果浏览器里有多个账号，请先切到平时使用即梦的那个窗口，再继续安装。</p></div></div>
+          <div class="illustration profile-illustration" role="img" aria-label="操作示意：在浏览器右上角确认正在使用的账号窗口">
+            <span class="illustration-label">操作位置示意</span>
+            <div class="profile-window"><div class="window-top"><span></span><span></span><span></span><div class="window-address">jimeng.jianying.com</div><div class="profile-avatar">我</div></div><div class="window-body"><div class="profile-callout">确认当前浏览器账号</div></div></div>
+          </div>
+        </li>
+
+        <li class="guide-step">
+          <div class="step-copy"><span class="step-index">03</span><div><h3>打开扩展管理页</h3><p>在浏览器地址栏输入下面的地址，打开“开发者模式”。</p><div class="address-row"><code id="extension-address">chrome://extensions/</code><button id="copy-address" class="text-button" type="button" aria-label="复制扩展管理页地址">复制地址</button></div></div></div>
+          <div class="illustration extensions-illustration" role="img" aria-label="操作示意：扩展管理页面中打开开发者模式">
+            <span class="illustration-label">操作位置示意</span>
+            <div class="browser-preview"><div class="preview-top"><span id="preview-browser">Chrome</span><div id="preview-address">chrome://extensions/</div></div><div class="preview-content"><strong>扩展程序</strong><div class="developer-row"><span>开发者模式</span><span class="toggle-on"><i></i></span></div></div></div>
+          </div>
+        </li>
+
+        <li class="guide-step">
+          <div class="step-copy"><span class="step-index">04</span><div><h3>加载整个文件夹</h3><p>点击“<span id="load-button-name">加载未打包的扩展程序</span>”，选择解压后<strong>包含 manifest.json 的整个文件夹</strong>。文件变灰是正常的，不要点选单个文件。</p></div></div>
+          <div class="illustration picker-illustration" role="img" aria-label="操作示意：点击加载未打包的扩展程序，再选中包含 manifest.json 的整个文件夹">
+            <span class="illustration-label">操作位置示意</span>
+            <div class="picker-preview"><div class="picker-toolbar"><span id="load-button-preview">加载未打包的扩展程序</span></div><div class="picker-body"><div class="picker-folder"><span aria-hidden="true">▰</span> 即梦采集端 <b aria-hidden="true">✓</b></div><div class="picker-file">└ manifest.json</div></div><div class="picker-footer">选择的是文件夹</div></div>
+          </div>
+        </li>
+      </ol>
+
+      <div class="finish-line"><span class="finish-check" aria-hidden="true">✓</span><p>扩展列表出现“即梦积分管家”并已启用后，刷新即梦页面。若没读到数据，点击插件图标查看连接状态。</p></div>
+
+      <details class="assistant-guide">
+        <summary>使用安装助手 <span class="summary-hint">可选</span></summary>
+        <div class="assistant-content"><p>在解压文件夹里双击 <strong id="assistant-file">Windows-双击安装.cmd</strong>。助手会帮你打开扩展管理页和插件文件夹，最后仍需在浏览器中加载整个文件夹。</p><p>助手无法打开页面或脚本被拦截时，按上面的手动步骤安装即可。</p></div>
+      </details>
+    </section>
+  </main>
+</body>
+</html>

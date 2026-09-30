@@ -1,0 +1,46 @@
+.team-focus-card { position: relative; cursor: pointer; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.team-directory-grid > .team-focus-card:only-child { grid-column: auto; }
+.team-focus-card:hover { border-color: #b7c9e8; box-shadow: 0 6px 18px #3157890c; }
+.team-focus-card:has(.team-focus-card-open:focus-visible) { outline: 2px solid #688de1; outline-offset: 3px; }
+.team-focus-card-open { position: absolute; inset: 0; width: 100%; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+.team-focus-card-open:focus-visible { outline: none; }
+.team-focus-arrow { margin-left: auto; flex: none; color: #8b9db9; }
+.team-focus-card-balance { margin-top: 22px; }
+.team-focus-card-balance > span:first-child { display: block; color: #6b7f9c; font-size: 12px; }
+.team-focus-card-balance > strong { display: block; margin: 5px 0 0; color: #4c6daa; font-size: 30px; font-weight: 560; font-variant-numeric: tabular-nums; }
+.team-focus-card-balance > strong small { margin-left: 6px; color: #7f90a9; font-size: 12px; font-weight: 400; }
+.team-focus-expiry { display: block; margin-top: 5px; color: #8a6e44; font-size: 12px; line-height: 1.5; }
+.team-focus-card-meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 17px; padding-top: 13px; border-top: 1px solid #e8eef7; color: #6d7f99; font-size: 12px; line-height: 1.6; }
+.team-focus-card-meta > span { overflow-wrap: anywhere; }
+.team-focus-card-meta strong { margin-left: 4px; color: #435b7a; font-weight: 550; }
+.team-focus-detail > .detail-identity { margin-bottom: 10px; }
+.team-focus-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 18px; margin-bottom: 20px; color: #6b7f9c; font-size: 12px; }
+.team-focus-context strong { margin-left: 4px; color: #4c6daa; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.team-focus-context .team-focus-expiry { display: inline; margin: 0; }
+.team-focus-detail .team-detail-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 20px; }
+.team-focus-detail .team-detail-tabs > span { width: calc((100% - 6px) / 2); }
+.team-manage-menu { position: relative; margin-left: auto; font-size: 12px; }
+.team-manage-menu > summary { color: #5275af; cursor: pointer; list-style: none; }
+.team-manage-menu > summary::-webkit-details-marker { display: none; }
+.team-manage-menu > summary:focus-visible { outline: 2px solid #688de1; outline-offset: 4px; border-radius: 2px; }
+.team-manage-options { position: absolute; right: 0; top: calc(100% + 8px); z-index: 5; min-width: 132px; padding: 5px; border: 1px solid #e4ebf7; border-radius: 7px; background: #fff; box-shadow: 0 8px 24px #213b5d1c; }
+.team-manage-options button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: #435b7a; text-align: left; cursor: pointer; font: inherit; white-space: nowrap; }
+.team-manage-options button:hover, .team-manage-options button:focus-visible { background: #f0f4fb; }
+.team-manage-options button:disabled { opacity: .45; cursor: default; }
+.team-focus-detail .team-members-table td, .team-focus-detail .team-members-table th { padding-top: 12px; padding-bottom: 12px; }
+.team-focus-detail .team-members-table td:first-child > strong { max-width: none; }
+html[data-theme="dark"] .team-focus-card:hover { border-color: var(--theme-accent-border); box-shadow: 0 6px 20px #00000026; }
+html[data-theme="dark"] .team-focus-card-meta { border-color: var(--line); }
+html[data-theme="dark"] .team-focus-card-meta strong { color: var(--theme-text); }
+html[data-theme="dark"] .team-focus-card-balance > span:first-child, html[data-theme="dark"] .team-focus-context { color: var(--theme-muted); }
+html[data-theme="dark"] .team-focus-card-balance > strong, html[data-theme="dark"] .team-focus-context strong { color: var(--theme-accent); }
+html[data-theme="dark"] .team-focus-card-balance > strong small { color: var(--theme-muted); }
+html[data-theme="dark"] .team-focus-expiry { color: var(--theme-warning); }
+html[data-theme="dark"] .team-manage-menu > summary { color: var(--theme-accent); }
+html[data-theme="dark"] .team-manage-options { background: var(--theme-surface); border-color: var(--line); }
+html[data-theme="dark"] .team-manage-options button { color: var(--theme-text); }
+html[data-theme="dark"] .team-manage-options button:hover, html[data-theme="dark"] .team-manage-options button:focus-visible { background: var(--theme-raised); }
+@media (max-width: 560px) {
+  .team-focus-card-balance > strong { font-size: 27px; }
+}
+@media (prefers-reduced-motion: reduce) { .team-focus-card { transition: none; } }

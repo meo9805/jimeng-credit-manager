@@ -76,6 +76,43 @@ test('login, space, version, readiness and server-returned submit IDs must remai
   assert.equal(h.signals.length, 0);
 });
 
+test('stable login and actual request selector capture accepted local work while the balance-ready flag is stuck false', () => {
+  for (const team of [false,true]) {
+    const h=harness();h.credit.isLocalCreditReady=false;
+    if(team)h.snapshot.account={accountType:'team',accountKey:'team:team-3',teamId:'team-3'};
+    const keys=[];
+    h.page.localStorage={getItem(key){keys.push(key);return team?'team-3':null;}};
+    h.install();h.native.created.fire(h.model('accepted-with-stale-balance'));h.native.submitted.fire(h.model('accepted-with-stale-balance'));
+    assert.equal(h.signals.length,1);
+    assert.deepEqual(h.signals[0].operationEvidence,{submitId:'accepted-with-stale-balance',userId:'user-1',spaceType:team?'team':'personal',spaceId:team?'team-3':'personal',occurredAt:'2026-09-15T05:00:00.000Z'});
+    assert.ok(keys.length>0&&keys.every(key=>key==='dreamina_current_team_id'));
+    assert.equal(h.credit.isLocalCreditReady,false);
+  }
+});
+
+test('unready local work rejects unknown or mismatched request targets and any in-flight context transition', () => {
+  for (const configure of [h=>{},h=>{h.page.localStorage={getItem(){throw new Error('blocked');}};},
+    h=>{h.page.localStorage={getItem(){return 'different-team';}};},h=>{h.snapshot.account=null;h.page.localStorage={getItem(){return null;}};}]) {
+    const h=harness();h.credit.isLocalCreditReady=false;configure(h);h.install();
+    h.native.created.fire(h.model('ambiguous'));h.native.submitted.fire(h.model('ambiguous'));assert.equal(h.signals.length,0);
+  }
+  for(const change of [h=>{h.user.userId='borrowed-next';},h=>{h.snapshot.version++;},h=>{h.credit.isLocalCreditReady=true;},
+    h=>{h.snapshot.account={accountType:'team',accountKey:'team:new',teamId:'new'};h.page.localStorage.getItem=()=> 'new';},
+    h=>{h.page.localStorage.getItem=()=> 'different-team';},h=>{h.feature.commercialCreditService={...h.credit};}]) {
+    const h=harness();h.credit.isLocalCreditReady=false;h.page.localStorage={getItem(){return null;}};h.install();
+    h.native.created.fire(h.model('transition'));change(h);h.native.submitted.fire(h.model('transition'));assert.equal(h.signals.length,0);
+  }
+});
+
+test('after switching accounts the next local submission is captured for the new charged UID without altering prior evidence', () => {
+  const h=harness();h.page.localStorage={getItem(){return null;}};h.install();
+  h.native.created.fire(h.model('own-account'));h.native.submitted.fire(h.model('own-account'));
+  h.user.userId='borrowed-account';h.snapshot.version++;h.credit.isLocalCreditReady=false;h.accountChanges.fire();
+  h.native.created.fire(h.model('borrowed-account-task'));h.native.submitted.fire(h.model('borrowed-account-task'));
+  assert.deepEqual(h.signals.map(item=>[item.operationEvidence.submitId,item.operationEvidence.userId]),[['own-account','user-1'],['borrowed-account-task','borrowed-account']]);
+  assert.ok(h.signals.every(item=>Object.keys(item.operationEvidence).sort().join(',')==='occurredAt,spaceId,spaceType,submitId,userId'));
+});
+
 test('late services attach once, replacements discard pending work, and pagehide disposes subscriptions', () => {
   const h = harness(); delete h.page.__debugger.ContentGeneratorTaskFeatureService;
   h.install(); assert.equal(h.native.created.size, 0);

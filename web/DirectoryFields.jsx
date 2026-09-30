@@ -3,7 +3,7 @@ import { ManagerSelect } from './ManagerSelect.jsx';
 export function EmployeeSelect({ id, label = '员工', value, onChange, employees, disabled = false, required = false, emptyLabel = '请选择员工' }) {
   return <ManagerSelect id={id} label={label} className="directory-field" value={value || ''} onChange={onChange} searchable disabled={disabled} required={required}>
     <option value="">{emptyLabel}</option>
-    {employees.map(employee => <option key={employee.id} value={employee.id}>{employee.name} · {employee.department || '部门待设置'}</option>)}
+    {employees.map(employee => <option key={employee.id} value={employee.id}>{employee.name} · {employee.department || '未设置部门'}</option>)}
   </ManagerSelect>;
 }
 

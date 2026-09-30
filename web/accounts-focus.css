@@ -1,0 +1,71 @@
+.grouped-accounts.accounts-panel { overflow: visible; }
+.accounts-primary-filters { position: relative; gap: 10px; }
+.accounts-primary-filters > .search-input { flex: 1 1 290px; width: auto; max-width: 430px; }
+.accounts-primary-filters > .search-input input { font-size: 13px; }
+.accounts-extra-filters { position: relative; flex: 0 0 auto; }
+.accounts-extra-filters > summary { display: inline-flex; align-items: center; min-height: 35px; padding: 0 13px; border: 1px solid #e1e8f2; border-radius: 6px; background: #fff; color: #52647d; font-size: 13px; cursor: pointer; list-style: none; }
+.accounts-extra-filters > summary::-webkit-details-marker { display: none; }
+.accounts-extra-filters > summary:hover, .accounts-extra-filters[open] > summary { border-color: #b8c9e4; background: #fbfcff; }
+.accounts-extra-filters > summary:focus-visible, .accounts-active-filters button:focus-visible { outline: 2px solid #7498d4; outline-offset: 2px; }
+.accounts-extra-panel { position: absolute; z-index: 25; right: 0; top: calc(100% + 7px); width: min(480px, calc(100vw - 44px)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 13px; border: 1px solid #dfe7f2; border-radius: 9px; background: #fff; box-shadow: 0 12px 34px #23395a1c; }
+.accounts-extra-panel .manager-select-field, .accounts-extra-panel .manager-select { width: 100%; max-width: none; }
+.accounts-active-filters { display: flex; gap: 7px; flex-wrap: wrap; padding: 0 21px 15px; margin-top: -6px; }
+.accounts-active-filters button { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 8px; border: 1px solid #dce7f8; border-radius: 5px; background: #f5f8fe; color: #5e75a0; font-size: 12px; cursor: pointer; }
+.accounts-active-filters button:hover { border-color: #b7cbed; color: #3d64a4; }
+.member-plan-card strong.plan-title { cursor: default; }
+.member-plan-card strong.plan-title:hover { color: #435a7c; }
+
+.account-detail-context { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 12px; padding-bottom: 20px; margin-bottom: 18px; border-bottom: 1px solid #edf1f6; }
+.account-detail-context strong { color: #435a7c; font-size: 17px; font-weight: 600; }
+.account-detail-context span { color: #8494aa; font-size: 12px; }
+.account-detail-focus .account-expiry-section { padding: 0; margin: 0; border: 0; }
+.account-expiry-section dl { gap: 0; }
+.account-expiry-section dl > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid #edf1f6; align-items: baseline; }
+.account-expiry-section dl > div:last-child { border-bottom: 0; }
+.account-expiry-section dt { width: auto; }
+.account-expiry-section dd { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 15px; flex-wrap: wrap; }
+.account-expiry-section dd strong { font-size: 14px; font-weight: 600; color: #435a7c; }
+.account-expiry-section dd span { color: #7587a1; }
+.account-detail-empty { font-size: 12px; color: #8999ad; }
+.account-ledger-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 13px 0; margin-top: 10px; border: 0; border-top: 1px solid #edf1f6; background: transparent; color: #4b6fac; font-size: 13px; text-align: left; cursor: pointer; }
+.account-ledger-link:hover { color: #315791; }
+.account-detail-management { margin-top: 4px; border-top: 1px solid #edf1f6; }
+.account-manage-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 13px 0; border: 0; background: transparent; color: #7184a1; font-size: 13px; text-align: left; cursor: pointer; }
+.account-manage-toggle:hover { color: #4b6fac; }
+.account-manage-toggle svg { transition: transform 180ms ease; }
+.account-manage-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.account-ledger-link:focus-visible, .account-manage-toggle:focus-visible { outline: 2px solid #7498d4; outline-offset: 2px; }
+.account-detail-management .owner-form { margin: 5px 0 20px; }
+.account-detail-focus.direct-edit .account-detail-management { margin-top: 0; border-top: 0; }
+.account-detail-focus.direct-edit .owner-form { margin-top: 0; }
+.account-transaction { padding: 14px 0; }
+.account-transaction > div > strong { font-size: 13px; color: #435a7c; font-weight: 600; }
+.account-transaction > div > small { display: block; margin-top: 5px; font-size: 11px; }
+.account-transaction p { font-size: 11px; margin: 4px 0; }
+
+html[data-theme="dark"] .accounts-extra-filters > summary,
+html[data-theme="dark"] .accounts-extra-panel { background: var(--theme-surface); border-color: var(--line); color: var(--theme-secondary); }
+html[data-theme="dark"] .accounts-extra-filters > summary:hover,
+html[data-theme="dark"] .accounts-extra-filters[open] > summary { background: var(--theme-raised); }
+html[data-theme="dark"] .accounts-active-filters button { background: var(--theme-raised); border-color: var(--line); color: var(--theme-secondary); }
+html[data-theme="dark"] .member-plan-card strong.plan-title:hover { color: var(--theme-text); }
+html[data-theme="dark"] .account-expiry-section dl > div,
+html[data-theme="dark"] .account-detail-context,
+html[data-theme="dark"] .account-ledger-link,
+html[data-theme="dark"] .account-detail-management { border-color: var(--line); }
+html[data-theme="dark"] .account-expiry-section dd strong,
+html[data-theme="dark"] .account-detail-context strong,
+html[data-theme="dark"] .account-transaction > div > strong { color: var(--theme-text); }
+html[data-theme="dark"] .account-expiry-section dd span,
+html[data-theme="dark"] .account-detail-context span { color: var(--theme-muted); }
+html[data-theme="dark"] .account-manage-toggle { color: var(--theme-secondary); }
+html[data-theme="dark"] .account-ledger-link { color: var(--theme-accent); }
+
+@media (max-width: 560px) {
+  .accounts-primary-filters > .search-input { flex-basis: 100%; width: 100%; max-width: none; }
+  .accounts-primary-filters > .manager-select-field { flex: 1 1 160px; }
+  .accounts-extra-filters { position: static; }
+  .accounts-extra-panel { left: 16px; right: 16px; top: calc(100% - 8px); width: auto; grid-template-columns: 1fr; }
+  .accounts-active-filters { padding-left: 16px; padding-right: 16px; }
+  .account-expiry-section dl > div { grid-template-columns: 80px minmax(0, 1fr); }
+}

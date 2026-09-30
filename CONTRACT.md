@@ -1,8 +1,10 @@
-# 即梦积分管家 · 本地试用版
+# 即梦积分管家 · API 与数据契约
 
 目标：员工只安装管理员配置好的扩展，正常使用即梦；管理者用一个 Web 页面查看余额、流水、同步状态。独立项目，不改现有视频智能体，不自动切换即梦账号，不代为生成。
 
-运行：Node 22 内置 SQLite + HTTP，React/Vite/Semi UI。服务器只绑定 127.0.0.1:4318，本轮交付本机试用；多电脑 rollout 需要 HTTPS 地址和管理员完成分发。私密运行数据放 .local/（不入 git、不入交付压缩包）。
+运行：Node 22 内置 SQLite + HTTP，React/Vite/Semi UI。默认绑定 127.0.0.1:4318；多电脑部署需配置管理端与采集端的独立入口，由管理员完成分发。私密运行数据放 .local/（不入 git、不入交付压缩包）。
+
+此文档保留基础数据契约；完整路由与边界以 `server/index.mjs` 及对应测试为准。2026-09-30 源码包含账号池、员工接入审核、平台标价与参考单价扩展，尚未在此逐一展开其请求字段。
 
 ## API contract
 
@@ -20,7 +22,7 @@
 - GET /api/collector/commands (Bearer installation token) → {commands:[{type:'refresh',requestId,createdAt,expiresAt}],polledAt:ISO}. Claims only this installation's pending refresh targets and updates its command-poll heartbeat. Unfinished commands may be redelivered; the worker must deduplicate by requestId and use a fresh collection started at or after createdAt. No other installation's targets/results are disclosed.
 - POST /api/collector/commands/:requestId/result (Bearer installation token) {status:'completed'|'partial'|'failed'|'no_open_tabs',message?:string|null} → {accepted:true,requestId,status}. Only the targeted installation can report, after claiming through a poll. The same terminal status is idempotent; a conflicting result or an expired target returns 409. Message is an allowlisted safe summary of at most 160 characters; do not send credentials, raw errors, page content or prompts. startedAt/finishedAt are server timestamps and are not accepted on input. A completed result means a fresh read and ingest acknowledgement succeeded; partial means some requested open contexts failed or were unavailable.
 - POST /api/ingest (Bearer installation token) {observedAt, accounts:ObservedAccount[], transactions:ObservedTransaction[], teams?:TeamSnapshot[], status?:'ok'|'login_required'|'error', message?:string} → {accepted:true,accounts,transactions,teams}; counts report applied account/team snapshots and newly inserted transactions. Collector cannot read dashboard. Validate host, Origin, JSON sizes, IDs, finite amounts; unknown is null, no default zero. Validate against allowlisted shape and do not store raw payload. Idempotence transaction IDs, balance snapshots only move forward. No secrets, prompts, generated assets.
-- GET /api/collector/status (Bearer token) → {employeeName,department,role,enabled,lastSeenAt,dashboardUrl}; extension popup status + manager entry. Admin installer role grants access to /api/admin/extension-login via POST Bearer → admin cookie. Collector cannot call it. No token in URLs.
+- GET /api/collector/status (Bearer token) → collector-scoped status. Collector tokens do not grant management access, including legacy administrator-labelled installations; `/api/admin/extension-login` is disabled. No token in URLs.
 - GET /api/health → {ok:true,version:'0.1.0'}.
 
 Account fields: id (server derived), platformUserId, spaceId, spaceType:'personal'|'team', scope:'personal'|'team_total'|'team_member', displayName, spaceName, ownerName:string|null, ownerDepartment:string|null, balance:number|null, giftBalance:number|null, purchaseBalance:number|null, subscriptionBalance:number|null, expiresAt:string|null, lastSyncedAt ISO, source:'live'|'demo', status:'ok'|'stale'|'unknown'. ObservedAccount excludes owner edits, source and status. Identity: personal user ID; team_total space ID only (not collector ID); team_member user ID + space ID. Sum personal and team_total only; member rows must not be double counted.
@@ -44,6 +46,8 @@ Teams are deduplicated by spaceId and only strictly newer snapshots update them.
 Team responses also include derived balanceObservedAt:ISO|null (output only; not accepted in ingest). It advances to the accepted snapshot's observedAt only when totalBalance was explicitly provided, including an explicit null observation. Other team updates retain the prior balance and its original balanceObservedAt, even when team.observedAt advances. No observed balance defaults to null. Legacy records with a known totalBalance but no balanceObservedAt use their pre-update observedAt as a compatibility fallback. Display balance freshness using balanceObservedAt, not the general team observedAt.
 
 ## Acceptance
+
+Current ownership semantics: reports join the current confirmed account-to-employee mapping, including historical ledger presentation. Ownership change records audit decisions; they do not freeze reporting at the event date. Mapping changes must not rewrite platform facts or actual-operator evidence. A first observed login is not permission to assign ownership automatically.
 
 1. Management page works with live/empty/demo clearly separated; useful summary, filters, account detail, ledger, employee collector setup/download.
 2. Employee extension no extra login or identity form; provisioned admin setup; following active Jimeng user/space with read-only collection. No cookie export, cookie switches, prompts, assets.

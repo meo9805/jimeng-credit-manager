@@ -25,11 +25,26 @@ export function installOperationWatcher() {
     const account = snapshot?.account || credit?.currentAccount || credit?._currentAccount;
     const userId = id(user?.userId), spaceType = account?.accountType;
     const spaceId = spaceType === 'personal' ? 'personal' : id(account?.teamId);
-    if (!user?.hasLogin || !userId || !credit?.isLocalCreditReady ||
+    const creditReady = Boolean(credit?.isLocalCreditReady);
+    if (!user?.hasLogin || !userId ||
       !['personal', 'team'].includes(spaceType) || !spaceId || !id(account?.accountKey)) return null;
+    let requestSpace = null;
+    try {
+      if (typeof window.localStorage?.getItem === 'function') {
+        // The site's request interceptor obtains X-Team-Id from this one public
+        // team selector. No key means a personal request; no other storage is read.
+        const selectedTeam = window.localStorage.getItem('dreamina_current_team_id');
+        if (selectedTeam && !id(selectedTeam)) return null;
+        requestSpace = selectedTeam ? `team:${selectedTeam}` : 'personal';
+        if (requestSpace !== (spaceType === 'team' ? `team:${spaceId}` : 'personal')) return null;
+      }
+    } catch { /* A blocked selector cannot authorize capture using an unready UI. */ }
+    // A stuck balance-cache flag is not an account identity. When it is false,
+    // require the actual request selector and the visible account to agree.
+    if (!creditReady && requestSpace === null) return null;
     // Version prevents a switch away and back from claiming an in-flight submission.
     const version = typeof snapshot?.version === 'string' || Number.isFinite(snapshot?.version) ? snapshot.version : null;
-    return { userId, spaceType, spaceId, fingerprint: JSON.stringify([userId, spaceType, spaceId, account.accountKey, version]) };
+    return { userId, spaceType, spaceId, fingerprint: JSON.stringify([userId, spaceType, spaceId, account.accountKey, version, creditReady, requestSpace]) };
   };
   const currentContext = () => {
     const current = context(), next = current?.fingerprint || null;

@@ -1,0 +1,46 @@
+.access-settings-tabs {
+  display: flex;
+  gap: 22px;
+  margin: -7px 0 23px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.access-settings-tabs > button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 3px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 550;
+}
+.access-settings-tabs > button:hover,
+.access-settings-tabs > button.active { color: var(--blue); }
+.access-settings-tabs > button.active { border-bottom-color: var(--blue); }
+.access-settings-count {
+  min-width: 19px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: #edf2fc;
+  color: var(--blue);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.access-settings-admin-panel .panel-title { align-items: center; }
+.access-settings-admin-panel .panel-title p { margin-top: 5px; }
+.installation-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.installation-heading-actions .search-input { width: 220px; }
+@media (max-width: 760px) {
+  .panel-title:has(> .installation-heading-actions) { flex-wrap: wrap; }
+}
+html[data-theme="dark"] .access-settings-count { background: var(--theme-accent-surface); }
+@media (max-width: 560px) {
+  .access-settings-tabs { gap: 17px; margin-top: -7px; margin-bottom: 16px; }
+  .access-settings-tabs > button { font-size: 12px; }
+  .installation-heading-actions { width: 100%; }
+  .installation-heading-actions .search-input { width: auto; min-width: 0; flex: 1; }
+}

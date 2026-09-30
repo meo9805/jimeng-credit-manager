@@ -31,7 +31,7 @@ async function loadProvision() {
   const endpoint = endpointOrigin(p.endpoint);
   const internalEndpoint = p.internalEndpoint ? endpointOrigin(p.internalEndpoint) : null;
   const binding = {endpoint,installationId:p.installationId};
-  const stored = await chrome.storage.local.get(['serviceBinding','commandResults','archivedCommandResults','pending','isolatedPending','pendingOperationEvidence','isolatedOperationEvidence']);
+  const stored = await chrome.storage.local.get(['serviceBinding','commandResults','archivedCommandResults','pending','isolatedPending','rejected','isolatedRejected','pendingOperationEvidence','isolatedOperationEvidence']);
   const previous = stored.serviceBinding;
   if (!previous || previous.endpoint !== endpoint || previous.installationId !== p.installationId) {
     const migration = {serviceBinding:binding,scanKeys:{},rotationOffset:0,commandResults:{},extensionUpdate:null,
@@ -47,6 +47,10 @@ async function loadProvision() {
     if (previous && previous.installationId !== p.installationId && stored.pendingOperationEvidence?.length) {
       migration.isolatedOperationEvidence=[...(stored.isolatedOperationEvidence||[]),{binding:previous,isolatedAt:now(),evidence:stored.pendingOperationEvidence}];
       migration.pendingOperationEvidence=[];
+    }
+    if (previous && previous.installationId !== p.installationId && stored.rejected?.length) {
+      migration.isolatedRejected=[...(stored.isolatedRejected||[]),{binding:previous,isolatedAt:now(),rejected:stored.rejected}];
+      migration.rejected=[];
     }
     await chrome.storage.local.set(migration);
   }
@@ -116,15 +120,40 @@ async function refreshUpdate(p) {
 async function state(fields) {
   await chrome.storage.local.set({ state: { ...(await chrome.storage.local.get('state')).state, ...fields } });
 }
+const INGEST_BODY_BUDGET = 384 * 1024;
+const observationBytes = value => new TextEncoder().encode(JSON.stringify(value)).length;
+function splitObservation(observation) {
+  const factFields=['creditHistoryFacts','subscriptionFacts','creditSourceFacts'];
+  const base={...observation};
+  const facts=[];
+  for(const field of factFields) {
+    for(const item of (base[field] || [])) facts.push({field,item});
+    delete base[field];
+  }
+  if(observationBytes(base)>INGEST_BODY_BUDGET) throw new Error('采集数据超出单次上报上限');
+  const batches=[base];
+  for(const {field,item} of facts) {
+    let current=batches.at(-1);
+    const candidate={...current,[field]:[...(current[field] || []),item]};
+    if(observationBytes(candidate)>INGEST_BODY_BUDGET || (candidate[field]?.length || 0)>16) {
+      current={observedAt:observation.observedAt,status:'ok',accounts:[],transactions:[]};
+      current[field]=[item];
+      if(observationBytes(current)>INGEST_BODY_BUDGET) throw new Error('单组平台事实超出上报上限');
+      batches.push(current);
+    } else current[field]=candidate[field];
+  }
+  return batches;
+}
 async function enqueue(observation) {
+  const batches=splitObservation(observation);
   const { pending = [] } = await chrome.storage.local.get('pending');
-  if (pending.length >= 30) {
+  if (pending.length + batches.length > 30) {
     await state({warning:'离线队列已满，暂停推进流水，连接恢复后继续补齐'});
     throw new Error('离线队列已满，等待已有记录上传后继续采集');
   }
-  const queueId = crypto.randomUUID();
-  await chrome.storage.local.set({ pending: [...pending, { queueId, observation }] });
-  return queueId;
+  const items=batches.map(item=>({queueId:crypto.randomUUID(),observation:item}));
+  await chrome.storage.local.set({ pending: [...pending,...items] });
+  return items.map(item=>item.queueId);
 }
 let operationStorageWork=Promise.resolve();
 function operationStorage(task) {const next=operationStorageWork.then(task,task);operationStorageWork=next.catch(()=>{});return next;}
@@ -147,16 +176,77 @@ async function saveOperationEvidence(evidence) {
 async function flushOperationEvidence(p) {
   const batch=await operationStorage(async()=>((await chrome.storage.local.get('pendingOperationEvidence')).pendingOperationEvidence||[]).slice(0,100));
   if(!batch.length)return;
+  const key=x=>[x.submitId,x.userId,x.spaceType,x.spaceId].join('|');
+  const permanent=new Set([400,409,413,415,422]);
+  const deliver=async entries=>{
+    try {
+      const result=await api(p,'/api/ingest',{method:'POST',body:JSON.stringify({observedAt:now(),status:'ok',accounts:[],transactions:[],operationEvidence:entries})});
+      if(result.accepted!==true)throw new Error('操作记录尚未确认接收');
+    } catch(error) {
+      if(!permanent.has(error.status)) {
+        await diagnostics.record('operation_upload_failed',{httpStatus:error.status,pendingCount:entries.length});
+        throw error;
+      }
+      if(entries.length>1) {
+        const middle=Math.floor(entries.length/2);
+        await deliver(entries.slice(0,middle));
+        await deliver(entries.slice(middle));
+        return;
+      }
+      const rejected=entries[0],rejectedKey=key(rejected);
+      await operationStorage(async()=>{
+        const stored=await chrome.storage.local.get(['pendingOperationEvidence','rejectedOperationEvidence']);
+        const queue=stored.pendingOperationEvidence||[];
+        const archive=Array.isArray(stored.rejectedOperationEvidence)?stored.rejectedOperationEvidence:[];
+        if(!archive.some(item=>item?.evidence&&key(item.evidence)===rejectedKey)) {
+          if(archive.length>=500) {
+            await diagnostics.record('operation_queue_full',{pendingCount:archive.length});
+            await state({warning:'被拒操作凭证已保留 500 条，请管理员排查本机记录'}).catch(()=>{});
+            throw new Error('被拒操作凭证本机保留已满');
+          }
+          archive.push({at:now(),status:error.status,evidence:rejected});
+        }
+        await chrome.storage.local.set({pendingOperationEvidence:queue.filter(item=>key(item)!==rejectedKey),rejectedOperationEvidence:archive});
+      });
+      await diagnostics.record('operation_rejected',{httpStatus:error.status,pendingCount:1});
+      await state({warning:'有操作凭证被拒收，已保留本机；其他凭证继续同步'}).catch(()=>{});
+      return;
+    }
+    await operationStorage(async()=>{
+      const queue=(await chrome.storage.local.get('pendingOperationEvidence')).pendingOperationEvidence||[];
+      const sent=new Set(entries.map(key));
+      await chrome.storage.local.set({pendingOperationEvidence:queue.filter(item=>!sent.has(key(item)))});
+    });
+    await diagnostics.record('operation_uploaded',{pendingCount:entries.length});
+  };
+  await deliver(batch);
+}
+const MAX_REJECTED_OBSERVATIONS=30, REJECTED_RETRY_MS=30*60*1000;
+async function retryRejected(p) {
+  const archive=(await chrome.storage.local.get('rejected')).rejected||[];
+  if(!Array.isArray(archive))return;
+  const index=archive.findIndex(item=>item?.entry && (!item.retryAt || Date.parse(item.retryAt)<=Date.now()));
+  if(index<0)return;
+  const selected=archive[index];
   try {
-    const result=await api(p,'/api/ingest',{method:'POST',body:JSON.stringify({observedAt:now(),status:'ok',accounts:[],transactions:[],operationEvidence:batch})});
-    if(result.accepted!==true)throw new Error('操作记录尚未确认接收');
-  } catch(error) {await diagnostics.record('operation_upload_failed',{httpStatus:error.status,pendingCount:batch.length});throw error;}
-  await operationStorage(async()=>{
-    const queue=(await chrome.storage.local.get('pendingOperationEvidence')).pendingOperationEvidence||[];
-    const sent=new Set(batch.map(x=>JSON.stringify(x)));
-    await chrome.storage.local.set({pendingOperationEvidence:queue.filter(x=>!sent.has(JSON.stringify(x)))});
-  });
-  await diagnostics.record('operation_uploaded',{pendingCount:batch.length});
+    const result=await api(p,'/api/ingest',{method:'POST',body:JSON.stringify(selected.entry)});
+    if(result.accepted!==true)throw new Error('管理服务尚未确认接收数据');
+  } catch(error) {
+    if([401,403].includes(error.status))throw error;
+    const latest=(await chrome.storage.local.get('rejected')).rejected||[];
+    if(Array.isArray(latest)&&latest[index]) {
+      latest[index]={...latest[index],retryAt:new Date(Date.now()+REJECTED_RETRY_MS).toISOString()};
+      await chrome.storage.local.set({rejected:latest});
+    }
+    await diagnostics.record('upload_failed',{httpStatus:error.status,pendingCount:archive.length});
+    return;
+  }
+  const latest=(await chrome.storage.local.get('rejected')).rejected||[];
+  if(Array.isArray(latest)&&latest[index]) {
+    latest.splice(index,1);
+    await chrome.storage.local.set({rejected:latest});
+  }
+  await diagnostics.record('upload_recovered');
 }
 async function flush(p) {
   const { pending = [] } = await chrome.storage.local.get('pending');
@@ -172,7 +262,25 @@ async function flush(p) {
       uploadDown=true;await diagnostics.record('upload_failed',{httpStatus:e.status,pendingCount:Math.min(pending.length,10000)});
       if (![400,409,413,415,422].includes(e.status)) throw e;
       const { rejected = [] } = await chrome.storage.local.get('rejected');
-      await chrome.storage.local.set({ rejected: [...rejected, { at: now(), status: e.status, entry }].slice(-10) });
+      const archive=Array.isArray(rejected)?rejected:[];
+      const exists=archive.some(item=>envelope.queueId ? item.queueId===envelope.queueId : JSON.stringify(item.entry)===JSON.stringify(entry));
+      if(!exists) {
+        if(archive.length>=MAX_REJECTED_OBSERVATIONS) {
+          const blocked=new Error('本机被拒记录已满，暂停新的读取，请管理员排查');
+          blocked.collectionBlocked=true;
+          await state({warning:blocked.message}).catch(()=>{});
+          throw blocked;
+        }
+        try {
+          await chrome.storage.local.set({rejected:[...archive,{queueId:envelope.queueId||null,at:now(),status:e.status,
+            retryAt:new Date(Date.now()+REJECTED_RETRY_MS).toISOString(),entry}]});
+        } catch {
+          const blocked=new Error('被拒记录未能保存在本机，暂停新的读取，请管理员排查');
+          blocked.collectionBlocked=true;
+          await state({warning:blocked.message}).catch(()=>{});
+          throw blocked;
+        }
+      }
       await state({ warning: '部分数据被管理服务拒收，已保留本机；其他数据继续同步，请管理员核对' });
     }
     const latest = (await chrome.storage.local.get('pending')).pending || [];
@@ -194,7 +302,12 @@ async function attach(tabId) {
 async function collectOnce(p, priorities = [],metrics={}) {
   let networkError = null;
   try {await flushOperationEvidence(p);}catch(e){if([401,403].includes(e.status))throw e;networkError=e;}
-  try { await flush(p); } catch(e) { if ([401,403].includes(e.status)) throw e; networkError = e; }
+  try { await retryRejected(p); } catch(e) { if ([401,403].includes(e.status)) throw e; networkError = e; }
+  try { await flush(p); } catch(e) {
+    if ([401,403].includes(e.status)) throw e;
+    if(e.collectionBlocked) {await state({status:'error',message:e.message});return {status:'failed',message:e.message};}
+    networkError = e;
+  }
   const openTabs = (await chrome.tabs.query({ url: JIMENG })).filter(t => t.id);
   metrics.readTabs=0;metrics.skippedTabs=Math.min(openTabs.length,100);
   const tabs = openTabs.filter(t => t.status === 'complete');
@@ -211,7 +324,7 @@ async function collectOnce(p, priorities = [],metrics={}) {
   const omitted = openTabs.length - selected.length;
   await chrome.storage.local.set({rotationOffset:(offset+Math.max(1,selected.length-first.length))%tabs.length});
   const { scanKeys = {} } = await chrome.storage.local.get('scanKeys');
-  const failures = []; let readCount = 0, acceptedCount = 0, partial = tabs.length > 5 || openTabs.length > tabs.length;
+  const failures = [], readDiagnostics = new Set(); let readCount = 0, acceptedCount = 0, partial = tabs.length > 5 || openTabs.length > tabs.length;
   for (const tab of selected) {
     try { await attach(tab.id); } catch { /* A fresh read remains useful if a listener cannot attach. */ }
     let results;
@@ -222,24 +335,35 @@ async function collectOnce(p, priorities = [],metrics={}) {
     } catch { failures.push({status:'error',message:'有页面正在跳转或暂时无法读取'}); continue; }
     const batch = results[0]?.result;
     if (!batch) { failures.push({status:'error',message:'有页面没有返回采集结果'}); continue; }
+    for (const code of (Array.isArray(batch.diagnosticCodes) ? batch.diagnosticCodes : [])) readDiagnostics.add(code);
     partial ||= batch.partial === true;
     let tabRead = false;
     for (const raw of (Array.isArray(batch.observations) ? batch.observations : [batch])) {
+    for (const code of (Array.isArray(raw.diagnosticCodes) ? raw.diagnosticCodes : [])) readDiagnostics.add(code);
     const observation = normalizeObservation(raw);
     if (observation.status !== 'ok' || (!observation.accounts.length && !observation.loginIdentity)) { failures.push(observation); continue; }
     if (!tabRead) {readCount++; tabRead = true;} partial ||= raw.partial === true || Boolean(raw.nextCursor);
     metrics.readTabs=Math.min(readCount,100);metrics.skippedTabs=Math.min(openTabs.length-readCount,100);
-    let id;
-    try {id=await enqueue(observation);}catch {failures.push({status:'error',message:'离线队列已满，待连接恢复后继续补齐'});continue;}
+    let ids;
+    try {ids=await enqueue(observation);}catch {failures.push({status:'error',message:'采集记录尚未安全排队，稍后重试'});continue;}
     const collections = scanKeys[tab.id]?.collections || {};
+    const hadCollection=Object.hasOwn(collections,raw.collectionKey),previousCollection=collections[raw.collectionKey];
     collections[raw.collectionKey] = {eventId:raw.headEventId,cursor:raw.nextCursor,pendingHead:raw.pendingHeadEventId};
     scanKeys[tab.id] = {collections:Object.fromEntries(Object.entries(collections).slice(-100))};
     try {
       const accepted = await flush(p); networkError = null;
-      if (!accepted.has(id)) { failures.push({status:'error',message:'新数据未被管理服务接收'}); continue; }
+      if (!ids.every(id=>accepted.has(id))) { failures.push({status:'error',message:'新数据未被管理服务完整接收'}); continue; }
       acceptedCount++;
     } catch(e) {
       if ([401,403].includes(e.status)) throw e;
+      if(e.collectionBlocked) {
+        if(hadCollection)collections[raw.collectionKey]=previousCollection;
+        else delete collections[raw.collectionKey];
+        scanKeys[tab.id]={collections:Object.fromEntries(Object.entries(collections).slice(-100))};
+        await chrome.storage.local.set({scanKeys:Object.fromEntries(Object.entries(scanKeys).slice(-100))});
+        await state({status:'error',message:e.message});
+        return {status:'failed',message:e.message};
+      }
       networkError = e; failures.push({status:'error',message:'新数据已在本机排队，管理服务尚未确认接收'});
       await state({ status:'error',message:'管理服务暂不可用，记录已在本机排队等待重试' });
       continue;
@@ -248,6 +372,7 @@ async function collectOnce(p, priorities = [],metrics={}) {
       accountName:raw.displayName || null,spaceName:raw.teamName || '个人空间',balance:typeof raw.balance === 'number' ? raw.balance : null});
     }
   }
+  for (const code of readDiagnostics) await diagnostics.record(code);
   if (!readCount && failures.length) {
     const latest = failures.at(-1);
     await enqueue({observedAt:now(),status:latest.status || 'error',message:latest.message || '页面暂时无法读取',accounts:[],transactions:[]});

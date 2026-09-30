@@ -1,5 +1,5 @@
 // Account ownership is independent of operation evidence. These server-owned
-// snapshots describe the mapping effective when a ledger event happened.
+// history records audit decisions; reporting always uses the current mapping.
 const MIGRATION = 'identity-ownership-history-v1';
 const emptyOwner = {employeeId:null,name:null,departmentId:null,department:null};
 
@@ -50,24 +50,10 @@ export function createOwnershipHistory(db, now) {
   function view() {
     const revision=db.prepare("SELECT revision FROM data_revisions WHERE name='ownership'").get().revision;
     if(cache?.revision===revision)return cache;
-    const histories=new Map();
-    for(const row of db.prepare('SELECT * FROM identity_ownership_history ORDER BY platform_user_id,effective_at,sequence').all()) {
-      const data=JSON.parse(row.data),at=Date.parse(row.effective_at),rows=histories.get(row.platform_user_id)??[];
-      rows.push({at,baseline:Boolean(row.is_baseline),
-        snapshot:Object.freeze({...data,basis:'effective',effectiveAt:row.effective_at}),
-        legacy:Object.freeze({...data,basis:data.employeeId?'legacy_current_mapping':'effective',effectiveAt:row.effective_at})});
-      histories.set(row.platform_user_id,rows);
-    }
-    const resolve=(platformUserId,occurredAt)=>{
-      const rows=histories.get(platformUserId),at=Date.parse(occurredAt);
-      if(!rows?.length||!Number.isFinite(at))return unassigned;
-      let low=0,high=rows.length;
-      while(low<high){const mid=(low+high)>>>1;if(rows[mid].at<=at)low=mid+1;else high=mid;}
-      if(low)return rows[low-1].snapshot;
-      // Only the deployment baseline can infer older ownership. A subsequent
-      // first mapping cannot retroactively claim previously unknown spending.
-      return rows[0].baseline?rows[0].legacy:unassigned;
-    };
+    const mappings=new Map(db.prepare('SELECT platform_user_id,updated_at FROM identity_mappings').all().map(row=>[
+      row.platform_user_id,Object.freeze({...current(row.platform_user_id),basis:'current_mapping',effectiveAt:row.updated_at})
+    ]));
+    const resolve=platformUserId=>mappings.get(platformUserId)??unassigned;
     cache={revision,resolve};return cache;
   }
   return {record,view};

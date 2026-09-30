@@ -29,7 +29,7 @@ export function teamCreditExpiryEstimate(account = {}) {
 
 export function estimatedExpiryLabel(estimate,now=Date.now(),full=false) {
   const expires=Date.parse(estimate.expiresAt),label=(full?fullDate:date).format(expires);
-  return `预计 ${label} ${expires<=now?'已到期，待更新':'到期'}`;
+  return `预计 ${label} ${expires<=now?'已到期 · 旧读数':'到期'}`;
 }
 
 export function estimatedExpiryTitle(estimate) {

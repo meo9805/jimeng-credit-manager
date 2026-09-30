@@ -14,7 +14,7 @@ test('optional account phone persists independently of enrollment, employee mapp
   const device=store.createInstallation({employeeId:employee.id,role:'collector'});
   const collect=(id='own',nickname='平台昵称')=>store.ingest(device,validateIngest({observedAt:new Date(++time).toISOString(),accounts:[{platformUserId:id,spaceId:'personal',scope:'personal',displayName:nickname,balance:100}],transactions:[]},time));
   const owner=()=>store.dashboard().identities.find(x=>x.platformUserId==='own');
-  collect();assert.equal(owner().employeeId,employee.id);assert.equal(owner().boundPhone,null);
+  collect();store.patchIdentity('own',{employeeId:employee.id});assert.equal(owner().employeeId,employee.id);assert.equal(owner().boundPhone,null);
   store.patchIdentity('own',validateIdentityMapping({boundPhone:'+86 19900000000'}));
   assert.equal(owner().employeeId,employee.id);assert.equal(owner().boundPhone,'+8619900000000');
   store.patchIdentity('own',validateIdentityMapping({employeeId:null}));assert.equal(owner().boundPhone,'+8619900000000');

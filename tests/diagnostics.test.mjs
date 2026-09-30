@@ -50,4 +50,5 @@ test('every collector diagnostic crosses server validation and has a manager lab
   assert.equal(accepted.length,logs.length);
   assert.ok(displayed.every(item=>item.label!=='其他采集事件'));
   assert.ok(displayed.find(item=>item.key==='event-operation_uploaded').facts.includes('本次上报凭证 2'));
+  assert.ok(displayed.find(item=>item.key==='event-operation_rejected').facts.includes('本机隔离凭证 2'));
 });

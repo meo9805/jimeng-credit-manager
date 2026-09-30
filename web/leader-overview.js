@@ -1,5 +1,7 @@
 import { teamCreditExpiryEstimate } from './credit-expiry.js';
-import { accountUnits, cycleFromBilling, cycleFromDates } from './credit-value.js';
+import { accountUnits } from './credit-value.js';
+import { referenceValue } from '../shared/reference-pricing.mjs';
+import { archivedTeamIds } from './team-management.js';
 
 const DAY = 86_400_000, OFFSET = 8 * 3_600_000;
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -126,29 +128,18 @@ function operationKey(event) {
     ? JSON.stringify([...event.ledger, charged, String(transaction.platformSubmitId)]) : null;
 }
 
-function fresh(account, now) {
+function fresh(account, now, maxAge = DAY) {
   const at = stamp(account?.lastSyncedAt);
-  return finite(account?.balance) && Number.isFinite(at) && at <= now && now - at <= DAY;
+  return finite(account?.balance) && Number.isFinite(at) && at <= now && now - at <= maxAge;
 }
 
-/** 每个账号最近一次收到的“订阅/会员积分”发放额，作为该账号每月实发积分的分母。团队会员单独处理。 */
-function subscriptionAllotments(transactions = []) {
-  const map = new Map();
-  for (const transaction of transactions) {
-    if (transaction.kind !== 'grant' || !(transaction.amount > 0)) continue;
-    const label = transaction.description || '';
-    if (!/订阅|会员/.test(label) || /团队/.test(label)) continue;
-    const previous = map.get(transaction.accountId);
-    if (!previous || stamp(transaction.occurredAt) > stamp(previous.at)) map.set(transaction.accountId, { amount: transaction.amount, at: transaction.occurredAt });
-  }
-  return map;
-}
-
-/** 金额按积分来源累加；没有单价的钱包不猜价格，只把它的积分记进 moneyUnpriced。 */
-function addMoney(target, field, value, credits) {
+/** Each displayed metric carries its own completeness, including unknown refunds. */
+function addMoney(target, field, value, credits, unpriced = null) {
   target.money ??= {};
+  target.moneyUnpricedByField ??= {};
   if (Number.isFinite(value)) target.money[field] = (target.money[field] ?? 0) + value;
-  else if (finite(credits) && credits > 0) target.moneyUnpriced = (target.moneyUnpriced ?? 0) + credits;
+  const unknown = unpriced ?? (!finite(value) && finite(credits) ? Math.abs(credits) : 0);
+  if (unknown > 0) target.moneyUnpricedByField[field] = (target.moneyUnpricedByField[field] ?? 0) + unknown;
 }
 
 function chooseBalance(previous, candidate) {
@@ -159,22 +150,23 @@ function chooseBalance(previous, candidate) {
   return (Number.isFinite(candidateAt) ? candidateAt : -Infinity) > (Number.isFinite(previousAt) ? previousAt : -Infinity) ? candidate : previous;
 }
 
-function dueFor(account, now) {
+function dueFor(account, now, maxAge = DAY) {
   const result = { batches: [], amount: 0, estimated: 0, unknown: 0 };
-  if (!fresh(account, now) || !(account.balance > 0)) return result;
+  if (!fresh(account, now, maxAge) || !(account.balance > 0)) return result;
   const batches = Array.isArray(account.creditBatches) ? account.creditBatches : [];
   let covered = 0;
   const seen = new Set();
   for (const [index, batch] of batches.entries()) {
     if (!finite(batch.amount) || batch.amount <= 0) continue;
     covered += batch.amount;
+    if (batch.kind === 'gift') continue;
     const at = stamp(batch.expiresAt);
     if (!Number.isFinite(at)) { result.unknown++; continue; }
     if (at <= now || at > now + 7 * DAY) continue;
-    const key = batch.id ?? `${accountKey(account)}:${batch.kind ?? 'unknown'}:${batch.expiresAt}:${index}`;
+    const key = `${accountKey(account)}:${batch.id ?? `${batch.kind ?? 'unknown'}:${batch.expiresAt}:${index}`}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    result.batches.push({ id: key, accountId: account.id, amount: batch.amount, expiresAt: batch.expiresAt, estimated: false, scope: account.scope });
+    result.batches.push({ id: key, accountId: account.id, amount: batch.amount, expiresAt: batch.expiresAt, estimated: false, kind: batch.kind ?? 'unknown', scope: account.scope });
     result.amount += batch.amount;
   }
   const estimate = teamCreditExpiryEstimate(account);
@@ -184,7 +176,7 @@ function dueFor(account, now) {
     const at = stamp(estimate.expiresAt);
     if (at > now && at <= now + 7 * DAY) {
       const amount = account.subscriptionBalance;
-      result.batches.push({ id: `${accountKey(account)}:estimated:${estimate.expiresAt}`, accountId: account.id, amount, expiresAt: estimate.expiresAt, estimated: true, scope: account.scope });
+      result.batches.push({ id: `${accountKey(account)}:estimated:${estimate.expiresAt}`, accountId: account.id, amount, expiresAt: estimate.expiresAt, estimated: true, kind: 'subscription', scope: account.scope });
       result.estimated += amount;
     }
   }
@@ -199,10 +191,10 @@ function newRow(employee, departments, removed = false) {
     departmentId: employee.departmentId ?? null, department: departments.get(employee.departmentId) ?? employee.department ?? null, removed,
     balance: null, personalBalance: null, teamBalance: null, staleBalance: 0, balancePartial: false, lastSyncedAt: null, accounts: [],
     ownedConsumption: null, operatorConsumption: null, selfConsumption: null, borrowedConsumption: null, lentConsumption: null,
-    unconfirmedConsumption: null, unknownOwnerConsumption: null, grossConsumption: 0, linkedRefunds: 0, unmatchedRefunds: 0, legacyOwnershipAmount: 0,
+    unconfirmedConsumption: null, unknownOwnerConsumption: null, grossConsumption: 0, linkedRefunds: 0, grossOperatorConsumption: 0, operatorRefunds: 0, unmatchedRefunds: 0, legacyOwnershipAmount: 0,
     expiry: expiryTotal(), dueBatches: [], expiringAmount: 0, estimatedExpiringAmount: 0, unknownExpiryCount: 0,
     daily: [], borrowedFrom: [], lentTo: [],
-    transactionIds: Object.fromEntries(['owned', 'operator', 'borrowed', 'lent', 'expiry', 'refund', 'unconfirmed'].map(key => [key, new Set()])),
+    transactionIds: Object.fromEntries(['owned', 'operator', 'borrowed', 'lent', 'expiry', 'refund', 'operatorRefund', 'unconfirmed'].map(key => [key, new Set()])),
     _daily: new Map(), _borrowed: new Map(), _lent: new Map(), _evidence: false, _selected: false,
   };
 }
@@ -213,39 +205,38 @@ function addDaily(row, at, field, amount) {
   entry[field] += amount;
   row._daily.set(date, entry);
 }
-function addRelation(row, field, other, amount, ids) {
-  const entry = row[field].get(other.employeeId) ?? { employeeId: other.employeeId, name: other.name || '已移除员工', department: other.department ?? null, amount: 0, transactionIds: new Set() };
+function addRelation(row, field, other, amount, ids, money) {
+  const entry = row[field].get(other.employeeId) ?? { employeeId: other.employeeId, name: other.name || '已移除员工', department: other.department ?? null, amount: 0, money: null, unpricedCredits: 0, transactionIds: new Set() };
   entry.amount += amount;
+  if (finite(money)) entry.money = (entry.money ?? 0) + money;
+  else entry.unpricedCredits += Math.abs(amount);
   for (const value of ids) entry.transactionIds.add(value);
   row[field].set(other.employeeId, entry);
 }
 
 /** No current mapping or observing collector is ever used as operation proof. */
-export function buildLeaderOverview({ accounts = [], transactions = [], identities = [], employees = [], departments = [], teams = [], installations = [], period = 'month', from = null, to = null, departmentId = 'all', now = Date.now(), asOf = null } = {}) {
+export function buildLeaderOverview({ accounts = [], transactions = [], identities = [], employees = [], departments = [], teams = [], teamManagement = [], installations = [], referenceRates = [], period = 'month', from = null, to = null, departmentId = 'all', now = Date.now(), asOf = null, useLastKnownBalances = false } = {}) {
   now = stamp(now);
+  // The leadership view retains each wallet's last reported balance until a
+  // newer observation replaces it. The administration view still checks age.
+  const balanceMaxAge = useLastKnownBalances ? Infinity : DAY;
   // 采集时间由服务端打点，所以“现在”必须以服务端时间为准：只要查看电脑的时钟慢一点，
   // 刚采集的余额就会落到“未来”，被当成过期剔除，总库存就会突然掉一大截再回来。
   const clock = Math.max(now, Number.isFinite(stamp(asOf)) ? stamp(asOf) : -Infinity);
   const range = overviewRange({ period, from, to, now: clock });
-  const allotments = subscriptionAllotments(transactions);
-  // 团队名册里的额度行不带套餐信息，用同空间团队钱包的套餐补上，否则这些积分算不出钱。
-  const teamPlanBySpace = new Map();
-  for (const account of accounts) if (account.scope === 'team_total' && account.membershipPlan) teamPlanBySpace.set(String(account.spaceId), account.membershipPlan);
   const unitsById = new Map();
-  // 每个钱包的每积分成本：套餐月费 ÷ 该账号每月实发订阅积分；周期先看自动续费信息，再看会员有效期与发放日。
   const unitsOf = account => {
     if (!account) return null;
     if (unitsById.has(account.id)) return unitsById.get(account.id);
-    const effective = account.membershipPlan ? account : { ...account, membershipPlan: teamPlanBySpace.get(String(account.spaceId)) ?? null };
-    const allotment = allotments.get(account.id) ?? null;
-    const cycle = cycleFromBilling(effective.billingCycle) || cycleFromDates(effective.membershipExpiresAt, allotment?.at) || 'month';
-    const units = accountUnits(effective, { monthlyCredits: allotment?.amount ?? null, cycle });
+    const units = accountUnits(account, { rates: referenceRates, at: clock });
     unitsById.set(account.id, units);
     return units;
   };
   const departmentNames = new Map(departments.map(department => [String(department.id), department.name]));
   const directory = new Map(identities.map(person => [String(person.platformUserId), person]));
   const accountMap = new Map(accounts.map(account => [account.id, account]));
+  const teamMap = new Map(teams.map(team => [String(team.spaceId), team]));
+  const archivedTeams = archivedTeamIds(teams, teamManagement);
   const rows = new Map(employees.map(employee => [String(employee.id), newRow(employee, departmentNames)]));
   const unassignedRow = newRow({ id: UNASSIGNED_ROW_ID, name: UNASSIGNED_ROW_NAME, departmentId: null }, departmentNames);
   unassignedRow.unassigned = true;
@@ -258,6 +249,26 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
     const row = rows.get(String(person.employeeId));
     return { employeeId: String(person.employeeId), name: row?.name ?? person.realName, departmentId: person.departmentId ?? row?.departmentId ?? null, department: person.department ?? row?.department ?? null };
   };
+  // Descriptive metadata may come from the canonical account even when a newer
+  // roster supplies the balance. Never reuse that older account's credit batches.
+  const walletDescription = account => {
+    const original = accountMap.get(account.id), team = teamMap.get(String(account.spaceId));
+    const isTeam = account.scope === 'team_total';
+    const creatorId = team?.creatorPlatformUserId ?? team?.members?.find(member => member.role === 'creator')?.platformUserId;
+    const person = personForIdentity(isTeam ? creatorId : account.platformUserId);
+    const ownerId = account.ownerEmployeeId ?? original?.ownerEmployeeId ?? null;
+    const owner = ownerId ? rows.get(String(ownerId)) : null;
+    const employeeName = isTeam ? owner?.name ?? account.ownerName ?? original?.ownerName ?? person?.name ?? null : person?.name ?? null;
+    const departmentId = isTeam ? account.ownerDepartmentId ?? original?.ownerDepartmentId ?? person?.departmentId ?? null : person?.departmentId ?? null;
+    return {
+      accountId: account.id, scope: account.scope, platformUserId: account.platformUserId ?? null, spaceId: account.spaceId ?? null,
+      employeeId: isTeam ? ownerId ?? person?.employeeId ?? null : person?.employeeId ?? null,
+      employeeName, ownerName: account.ownerName ?? original?.ownerName ?? employeeName,
+      departmentId, department: departmentNames.get(String(departmentId)) ?? account.ownerDepartment ?? original?.ownerDepartment ?? person?.department ?? null,
+      displayName: (isTeam ? team?.name ?? account.spaceName ?? original?.spaceName : account.displayName ?? original?.displayName ?? directory.get(String(account.platformUserId))?.nickname) ?? null,
+      spaceName: account.spaceName ?? original?.spaceName ?? (isTeam ? team?.name : null) ?? null,
+    };
+  };
   const ensureRow = person => {
     if (!person?.employeeId) return null;
     let row = rows.get(String(person.employeeId));
@@ -268,7 +279,7 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
   const summary = {
     availableBalance: null, staleBalance: 0, unknownBalanceCount: 0, balancePartial: false,
     netConsumption: 0, grossConsumption: 0, linkedRefunds: 0, unmatchedRefunds: 0, borrowedConsumption: 0,
-    expiry: expiryTotal(), expiringAmount: 0, estimatedExpiringAmount: 0, unknownExpiryCount: 0,
+    expiry: expiryTotal(), expiringAmount: 0, estimatedExpiringAmount: 0, unknownExpiryCount: 0, dueBatches: [], wallets: [],
     unconfirmedOperatorConsumption: 0, unassignedConsumption: 0, confirmedOperatorRate: null,
     pendingEmployees: 0, unallocatedBalance: null, legacyOwnershipAmount: 0,
     transactionIds: Object.fromEntries(['owned', 'borrowed', 'expiry', 'refund', 'unconfirmed'].map(key => [key, new Set()])),
@@ -278,18 +289,25 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
   // Employee stock uses member quotas; company stock uses each shared pool once.
   const balances = new Map();
   for (const account of accounts) {
+    if (account.scope !== 'personal' && archivedTeams.has(String(account.spaceId))) continue;
     const key = accountKey(account);
     if (key) balances.set(key, chooseBalance(balances.get(key), { ...account }));
   }
-  const teamSpaces = new Set(accounts.filter(account => account.scope !== 'personal').map(account => account.spaceId));
+  const teamSpaces = new Set(accounts.filter(account => account.scope !== 'personal' && !archivedTeams.has(String(account.spaceId))).map(account => account.spaceId));
   for (const team of teams) {
+    if (archivedTeams.has(String(team.spaceId))) continue;
     teamSpaces.add(team.spaceId);
     const poolKey = JSON.stringify(['team_total', String(team.spaceId)]);
     const currentPool = balances.get(poolKey);
     if (finite(team.totalBalance)) {
+      // The roster may report the same total a moment after the wallet read.
+      // Keep the wallet's separately labelled estimate in that case; a changed
+      // total cannot safely inherit the old credit composition or expiry.
+      const unchangedEstimate = currentPool?.balance === team.totalBalance ? teamCreditExpiryEstimate(currentPool) : null;
       const rosterPool = { id: currentPool?.id ?? `roster_pool:${team.spaceId}`, scope: 'team_total', spaceId: team.spaceId, platformUserId: team.creatorPlatformUserId,
         balance: team.totalBalance, lastSyncedAt: Object.hasOwn(team, 'balanceObservedAt') ? team.balanceObservedAt : team.observedAt,
-        ownerDepartmentId: currentPool?.ownerDepartmentId ?? personForIdentity(team.creatorPlatformUserId)?.departmentId ?? null, roster: true };
+        ownerDepartmentId: currentPool?.ownerDepartmentId ?? personForIdentity(team.creatorPlatformUserId)?.departmentId ?? null, roster: true,
+        ...(unchangedEstimate ? { subscriptionBalance: currentPool.subscriptionBalance, creditExpiryEstimate: unchangedEstimate } : {}) };
       balances.set(poolKey, chooseBalance(currentPool, rosterPool));
     }
     for (const member of team.members ?? []) {
@@ -302,7 +320,7 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
     }
     const poolPerson = { departmentId: currentPool?.ownerDepartmentId ?? personForIdentity(team.creatorPlatformUserId)?.departmentId ?? null };
     const at = stamp(team.balanceObservedAt ?? team.observedAt);
-    if (matchesDepartment(poolPerson) && finite(team.allocatableBalance) && Number.isFinite(at) && at <= clock && clock - at <= DAY) add(summary, 'unallocatedBalance', team.allocatableBalance);
+    if (matchesDepartment(poolPerson) && finite(team.allocatableBalance) && Number.isFinite(at) && at <= clock && clock - at <= balanceMaxAge) add(summary, 'unallocatedBalance', team.allocatableBalance);
   }
   for (const spaceId of teamSpaces) {
     const key = JSON.stringify(['team_total', String(spaceId)]);
@@ -310,11 +328,21 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
   }
   for (const account of balances.values()) {
     const person = account.scope === 'team_total' ? null : personForIdentity(account.platformUserId);
-    const row = ensureRow(person), current = fresh(account, clock), stockOwner = account.scope === 'team_total' ? { departmentId: account.ownerDepartmentId ?? null } : person;
+    const row = ensureRow(person), current = fresh(account, clock, balanceMaxAge), stockOwner = account.scope === 'team_total' ? { departmentId: account.ownerDepartmentId ?? null } : person;
     const selected = matchesDepartment(stockOwner);
-    const due = dueFor(account, clock);
+    const due = dueFor(account, clock, balanceMaxAge);
     if (account.scope !== 'team_member' && selected) {
-      if (current) { add(summary, 'availableBalance', account.balance); addMoney(summary, 'availableBalance', unitsOf(account)?.stockValue, account.balance); }
+      if (current) {
+        const metadata = walletDescription(account), units = unitsOf(account);
+        add(summary, 'availableBalance', account.balance);
+        addMoney(summary, 'availableBalance', units?.stockValue, account.balance, units?.stockUnpricedCredits);
+        summary.wallets.push({ ...metadata, id: accountKey(account), balance: account.balance, lastSyncedAt: account.lastSyncedAt,
+          referenceValue: units?.stockValue ?? null, unpricedCredits: units?.stockUnpricedCredits ?? 0 });
+        summary.dueBatches.push(...due.batches.map(batch => {
+          const value = referenceValue(account, batch.amount, referenceRates, clock, { kind: batch.kind });
+          return { ...metadata, ...batch, referenceValue: value, unpricedCredits: value == null ? batch.amount : 0 };
+        }));
+      }
       else { summary.unknownBalanceCount++; if (finite(account.balance)) summary.staleBalance += account.balance; }
       summary.expiringAmount += due.amount;
       summary.estimatedExpiringAmount += due.estimated;
@@ -328,7 +356,7 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
     if (Number.isFinite(stamp(account.lastSyncedAt)) && (!row.lastSyncedAt || stamp(account.lastSyncedAt) < stamp(row.lastSyncedAt))) row.lastSyncedAt = account.lastSyncedAt;
     if (current) {
       add(row, 'balance', account.balance);
-      addMoney(row, 'balance', unitsOf(account)?.stockValue, account.balance);
+      addMoney(row, 'balance', unitsOf(account)?.stockValue, account.balance, unitsOf(account)?.stockUnpricedCredits);
       add(row, account.scope === 'personal' ? 'personalBalance' : 'teamBalance', account.balance);
     } else {
       row.balancePartial = true;
@@ -365,24 +393,22 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
   }
 
   let confirmedGross = 0;
-  function consumption(event, amount, { refund = false } = {}) {
+  function consumption(event, amount, { refund = false, refundMoney = null } = {}) {
     const transaction = event.transaction, at = stamp(transaction.occurredAt), owner = ensureRow(event.owner), operator = ensureRow(event.operator);
     const ownerSelected = matchesDepartment(event.owner), operatorSelected = Boolean(operator && matchesDepartment(event.operator));
-    // 消费按它所在钱包的每积分成本折算；钱包没有单价（例如团队套餐）就只记积分，不猜金额。
-    const unit = unitsOf(event.account)?.average ?? null;
-    const money = unit == null ? null : amount * unit;
+    const money = refund ? refundMoney : referenceValue(event.account, amount, referenceRates, transaction.occurredAt);
     if (ownerSelected) {
       add(summary, 'netConsumption', amount);
       addMoney(summary, 'netConsumption', money, amount);
-      if (refund) { summary.linkedRefunds -= amount; pushIds(summary, 'refund', event.ids); }
-      else { summary.grossConsumption += amount; if (operator) confirmedGross += amount; }
+      if (refund) { summary.linkedRefunds -= amount; addMoney(summary, 'linkedRefunds', money == null ? null : -money, -amount); pushIds(summary, 'refund', event.ids); }
+      else { summary.grossConsumption += amount; addMoney(summary, 'grossConsumption', money, amount); if (operator) confirmedGross += amount; }
       pushIds(summary, 'owned', event.ids);
       if (owner) {
         owner._selected = true; owner._evidence = true;
         add(owner, 'ownedConsumption', amount);
         addMoney(owner, 'consumption', money, amount);
-        if (refund) { owner.linkedRefunds -= amount; pushIds(owner, 'refund', event.ids); }
-        else owner.grossConsumption += amount;
+        if (refund) { owner.linkedRefunds -= amount; addMoney(owner, 'linkedRefunds', money == null ? null : -money, -amount); pushIds(owner, 'refund', event.ids); }
+        else { owner.grossConsumption += amount; addMoney(owner, 'grossConsumption', money, amount); }
         pushIds(owner, 'owned', event.ids);
         addDaily(owner, at, 'owned', amount);
         if (event.owner.basis === 'legacy_current_mapping') { owner.legacyOwnershipAmount += amount; summary.legacyOwnershipAmount += amount; }
@@ -391,6 +417,8 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
         unassignedRow._evidence = true;
         add(unassignedRow, 'ownedConsumption', amount);
         addMoney(unassignedRow, 'consumption', money, amount);
+        if (refund) { unassignedRow.linkedRefunds -= amount; addMoney(unassignedRow, 'linkedRefunds', money == null ? null : -money, -amount); pushIds(unassignedRow, 'refund', event.ids); }
+        else { unassignedRow.grossConsumption += amount; addMoney(unassignedRow, 'grossConsumption', money, amount); }
         pushIds(unassignedRow, 'owned', event.ids);
         addDaily(unassignedRow, at, 'owned', amount);
       }
@@ -403,61 +431,99 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
     if (operatorSelected) {
       operator._selected = true; operator._evidence = true;
       add(operator, 'operatorConsumption', amount);
+      addMoney(operator, 'operatorConsumption', money, amount);
       pushIds(operator, 'operator', event.ids);
-      if (refund) pushIds(operator, 'refund', event.ids);
+      if (refund) {
+        operator.operatorRefunds -= amount;
+        addMoney(operator, 'operatorRefunds', money == null ? null : -money, -amount);
+        pushIds(operator, 'operatorRefund', event.ids);
+      } else {
+        operator.grossOperatorConsumption += amount;
+        addMoney(operator, 'grossOperatorConsumption', money, amount);
+      }
       addDaily(operator, at, 'operator', amount);
       if (!owner) add(operator, 'unknownOwnerConsumption', amount);
       else if (owner.employeeId !== operator.employeeId) {
         add(operator, 'borrowedConsumption', amount);
+        addMoney(operator, 'borrowedConsumption', money, amount);
         summary.borrowedConsumption += amount;
+        addMoney(summary, 'borrowedConsumption', money, amount);
         pushIds(operator, 'borrowed', event.ids); pushIds(summary, 'borrowed', event.ids);
-        addRelation(operator, '_borrowed', { ...event.owner, name: owner.name, department: event.owner.department ?? owner.department }, amount, event.ids);
+        addRelation(operator, '_borrowed', { ...event.owner, name: owner.name, department: event.owner.department ?? owner.department }, amount, event.ids, money);
       }
     }
     if (owner && operator && owner.employeeId === operator.employeeId && (ownerSelected || operatorSelected)) add(owner, 'selfConsumption', amount);
     if (owner && operator && owner.employeeId !== operator.employeeId && ownerSelected) {
       add(owner, 'lentConsumption', amount); pushIds(owner, 'lent', event.ids);
-      addRelation(owner, '_lent', { ...event.operator, name: operator.name, department: event.operator.department ?? operator.department }, amount, event.ids);
+      addMoney(owner, 'lentConsumption', money, amount);
+      addRelation(owner, '_lent', { ...event.operator, name: operator.name, department: event.operator.department ?? operator.department }, amount, event.ids, money);
     }
   }
-  for (const event of events) {
+  const refundedTasks = new Map();
+  const unmatchedRefund = (event, amount) => {
+    if (!(amount > 0) || !matchesDepartment(event.owner)) return;
+    summary.unmatchedRefunds += amount;
+    pushIds(summary, 'refund', event.ids);
+    const row = ensureRow(event.owner);
+    if (row) { row.unmatchedRefunds += amount; pushIds(row, 'refund', event.ids); }
+    else { unassignedRow.unmatchedRefunds += amount; unassignedRow._evidence = true; pushIds(unassignedRow, 'refund', event.ids); }
+  };
+  // Process every refund in time order, including earlier periods, so a repeated
+  // refund can never restore more than the original task was actually charged.
+  for (const event of [...events].sort((a, b) => stamp(a.transaction.occurredAt) - stamp(b.transaction.occurredAt) || String(a.transaction.id).localeCompare(String(b.transaction.id)))) {
     const transaction = event.transaction;
-    if (event.conflict || !inOverviewRange(transaction.occurredAt, range)) continue;
-    if (transaction.kind === 'consume' && transaction.amount < 0) consumption(event, -transaction.amount);
+    if (event.conflict || stamp(transaction.occurredAt) > clock) continue;
+    const selected = inOverviewRange(transaction.occurredAt, range);
+    if (transaction.kind === 'consume' && transaction.amount < 0 && selected) consumption(event, -transaction.amount);
     else if (transaction.kind === 'refund' && transaction.amount > 0) {
-      const candidates = (tasks.get(operationKey(event)) ?? []).filter(candidate => stamp(candidate.transaction.occurredAt) <= stamp(transaction.occurredAt));
+      const key = operationKey(event);
+      const candidates = (tasks.get(key) ?? []).filter(candidate => stamp(candidate.transaction.occurredAt) <= stamp(transaction.occurredAt));
       const owner = consensus(candidates.map(candidate => candidate.owner)), operator = consensus(candidates.map(candidate => candidate.operator));
       const ownerConflict = new Set(candidates.map(candidate => personSignature(candidate.owner))).size > 1;
       const operatorConflict = new Set(candidates.map(candidate => personSignature(candidate.operator))).size > 1;
-      if (candidates.length && !ownerConflict && !operatorConflict) consumption({ ...event, owner, operator }, -transaction.amount, { refund: true });
-      else {
-        if (matchesDepartment(event.owner)) {
-          summary.unmatchedRefunds += transaction.amount;
-          pushIds(summary, 'refund', event.ids);
-          const row = ensureRow(event.owner);
-          if (row) { row.unmatchedRefunds += transaction.amount; pushIds(row, 'refund', event.ids); }
-        }
+      if (!candidates.length || ownerConflict || operatorConflict) {
+        if (selected) unmatchedRefund(event, transaction.amount);
+        continue;
       }
-    } else if (transaction.kind === 'expire' && transaction.amount < 0) {
-      // The collector currently supplies no trustworthy historical source type.
-      // Never classify by description, size, clock time or today's credit batches.
+      const state = refundedTasks.get(key) ?? { credits: 0, money: 0, unknownMoney: false };
+      const charged = candidates.reduce((sum, candidate) => sum - candidate.transaction.amount, 0);
+      const remaining = Math.max(0, charged - state.credits), linked = Math.min(transaction.amount, remaining);
+      if (linked > 0) {
+        const units = candidates.map(candidate => referenceValue(candidate.account, 1, referenceRates, candidate.transaction.occurredAt));
+        let value = null;
+        if (units.every(finite)) {
+          if (units.every(unit => Math.abs(unit - units[0]) < 1e-12)) value = linked * units[0];
+          // All displayed money is an estimate. For partial refunds across
+          // rate revisions, prorate the remaining original charge value;
+          // a full refund still reverses exactly the original estimate.
+          else if (!state.unknownMoney) value = (candidates.reduce((sum, candidate, index) => sum - candidate.transaction.amount * units[index], 0) - state.money) * linked / remaining;
+        }
+        state.credits += linked;
+        if (value == null) state.unknownMoney = true; else state.money += value;
+        refundedTasks.set(key, state);
+        if (selected) consumption({ ...event, owner, operator }, -linked, { refund: true, refundMoney: value == null ? null : -value });
+      }
+      if (selected) unmatchedRefund(event, transaction.amount - linked);
+    } else if (transaction.kind === 'expire' && transaction.amount < 0 && selected) {
+      // Paid expiry is a management loss; free or unclassified expiry remains
+      // in the complete ledger. Source is projected from official raw facts.
+      if (!['subscription', 'purchase'].includes(transaction.expiryCreditKind)) continue;
       const amount = -transaction.amount;
       const owner = event.account?.scope === 'team_total' && !transaction.chargedPlatformUserId ? null : event.owner;
       const row = ensureRow(owner);
       const selected = owner ? matchesDepartment(owner) : matchesDepartment(event.account?.scope === 'team_total' ? { departmentId: event.account.ownerDepartmentId ?? null } : null);
-      const unit = unitsOf(event.account)?.average ?? null;
-      const money = unit == null ? null : amount * unit;
+      const money = referenceValue(event.account, amount, referenceRates, transaction.occurredAt);
       if (selected) {
-        summary.expiry.total += amount; summary.expiry.unclassified += amount; pushIds(summary, 'expiry', event.ids);
+        summary.expiry.total += amount; summary.expiry.paid += amount; pushIds(summary, 'expiry', event.ids);
         addMoney(summary, 'expiry', money, amount);
         const target = row ?? unassigned;
         if (row) { row._selected = true; row._evidence = true; }
-        target.expiry.total += amount; target.expiry.unclassified += amount; pushIds(target, 'expiry', event.ids);
+        target.expiry.total += amount; target.expiry.paid += amount; pushIds(target, 'expiry', event.ids);
         addMoney(target, 'expiry', money, amount);
         // 同一笔到期同时记入表内的「未归属」行，保证合计与摘要卡一致。
         if (!row) {
           unassignedRow._evidence = true;
-          unassignedRow.expiry.total += amount; unassignedRow.expiry.unclassified += amount;
+          unassignedRow.expiry.total += amount; unassignedRow.expiry.paid += amount;
           pushIds(unassignedRow, 'expiry', event.ids);
           addMoney(unassignedRow, 'expiry', money, amount);
         }
@@ -465,12 +531,24 @@ export function buildLeaderOverview({ accounts = [], transactions = [], identiti
     }
   }
   summary.confirmedOperatorRate = summary.grossConsumption > 0 ? confirmedGross / summary.grossConsumption : null;
-  summary.moneyEstimated = [...unitsById.values()].some(units => units?.estimated);
+  summary.moneyEstimated = true;
+  const completeMoney = (target, fields) => {
+    target.money ??= {};
+    target.moneyUnpricedByField ??= {};
+    for (const [moneyField, credits] of Object.entries(fields)) {
+      if (credits === 0 && !target.moneyUnpricedByField[moneyField] && target.money[moneyField] == null) target.money[moneyField] = 0;
+    }
+  };
+  completeMoney(summary, { availableBalance: summary.availableBalance, netConsumption: summary.netConsumption,
+    grossConsumption: summary.grossConsumption, linkedRefunds: summary.linkedRefunds, borrowedConsumption: summary.borrowedConsumption, expiry: summary.expiry.total });
   const finishIds = object => Object.fromEntries(Object.entries(object).map(([key, values]) => [key, [...values]]));
   // 「未归属」行只在确实存在未归属数据时出现，避免长期显示一个空行。
   const resultRows = [...rows.values()].filter(row => row._selected && (!row.unassigned || row.ownedConsumption !== null || row.expiry.total > 0 || row.unmatchedRefunds !== 0)).map(row => {
     if (!row.accounts.length && !row.unassigned) row.balancePartial = true;
-    row.moneyEstimated = row.accounts.some(account => unitsOf(account)?.estimated);
+    row.moneyEstimated = true;
+    completeMoney(row, { balance: row.balance, consumption: row.ownedConsumption, grossConsumption: row.grossConsumption,
+      linkedRefunds: row.linkedRefunds, operatorConsumption: row.operatorConsumption, grossOperatorConsumption: row.grossOperatorConsumption,
+      operatorRefunds: row.operatorRefunds, borrowedConsumption: row.borrowedConsumption, lentConsumption: row.lentConsumption, expiry: row.expiry.total });
     row.daily = [...row._daily.values()].sort((a, b) => a.date.localeCompare(b.date));
     for (const [field, source] of [['borrowedFrom', '_borrowed'], ['lentTo', '_lent']]) row[field] = [...row[source].values()].map(relation => ({ ...relation, transactionIds: [...relation.transactionIds] })).sort((a, b) => b.amount - a.amount || a.employeeId.localeCompare(b.employeeId));
     row.transactionIds = finishIds(row.transactionIds);

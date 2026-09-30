@@ -1,0 +1,9 @@
+.collector-menu-trigger { gap: 4px; white-space: nowrap; }
+.collector-menu-trigger span { font-size: 14px; line-height: 1; }
+.collector-menu-trigger[aria-expanded="true"] { color: var(--blue); }
+.collector-actions-popover { position: fixed; z-index: 1100; width: 152px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: 0 10px 30px #1e355029; }
+.collector-actions-popover button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 5px; background: none; color: var(--ink); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.collector-actions-popover button:hover, .collector-actions-popover button:focus-visible { background: var(--wash); outline: none; }
+.collector-actions-popover button.danger-action { color: #c26666; }
+.collector-actions-popover button:disabled { opacity: .45; cursor: default; }
+html[data-theme="dark"] .collector-actions-popover button.danger-action { color: var(--theme-danger); }

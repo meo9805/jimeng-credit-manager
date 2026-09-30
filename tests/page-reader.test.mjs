@@ -1,17 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {readJimengPage} from '../extension/page-reader.mjs';
 import {normalizeObservation} from '../extension/normalize.mjs';
+import {validateIngest} from '../server/domain.mjs';
 const good = n => ({ok:true,value:{credit:{giftCredit:0,purchaseCredit:0,vipCredit:n},creditsDetail:{}}});
 // Isolated client preserves the site's request handler order; no response handler
 // or global account mutator is available to the collector in this fixture.
-function scopedFixture(requests, beforeRequest=()=>{}) {
+function scopedFixture(requests, beforeRequest=()=>{}, responseFor=()=>undefined) {
   const source={interceptors:{request:{handlers:[{fulfilled:config=>{config.headers['X-Team-Id']='visible-team';return config;}}]}},create(){
     const handlers=[];
     return {interceptors:{request:{use(fn){handlers.push(fn);}}},async post(path,body){
       let config={headers:{}};for(const fn of [...handlers].reverse())config=fn(config);
-      const team=config.headers['X-Team-Id'];requests.push({path,body,team});beforeRequest(path);
-      let data;
+      const team=config.headers['X-Team-Id'];requests.push({path,body,team});beforeRequest(path,{body,team});
+      let data=responseFor(path,{body,team});
+      if(data !== undefined)return {status:200,data:{ret:'0',data}};
       if(path.endsWith('user_credit'))data={credit:{vip_credit:team?(body.query_scope==='team_all'?21000:7700):100,gift_credit:0,purchase_credit:0},credits_detail:{}};
       else if(path.endsWith('user_credit_history'))data={records:[],has_more:false};
       else if(path.endsWith('get_team_member_list'))data={team_member_list:[{user_id:'u1',nickname:'创建者',role:'Owner',status:'Active',user_credits:{remain_credits:7700}}],member_cnt:1,has_more:false};
@@ -26,20 +29,42 @@ const teamDiscovery = {'commercial-team-workspace-service':{_teamManager:{_teamw
   async getTeamInfo({teamId}){return {ok:true,value:{teamInfo:{teamId,teamName:'团队',currentRole:'Owner',ownerUserId:'u1',memberCnt:1,memberLimit:3,subscriptionInfo:{flag:teamId!=='expired',curLevel:'teams',vipEndTime:2000000000}}}};},
 }}},'environment-service':{appId:513695},'dreamina-vip-data-service':{}};
 
-test('all-space collection reads personal and active team without selecting either and uses separate history cursors',async()=>{
+test('all-space collection retains personal, active and inactive team facts without selecting spaces',async()=>{
   const requests=[];
   await withPage(scopedFixture(requests),async state=>{
     const before=structuredClone(state);
     const result=await readJimengPage({collectAllSpaces:true,previousCollections:{'u1:personal:personal':{cursor:'personal-page'},'u1:team:t1:team_total':{cursor:'team-page'}}});
-    assert.equal(result.status,'ok');assert.equal(result.observations.length,2);
+    assert.equal(result.status,'ok');assert.equal(result.observations.length,3);
     assert.equal(result.observations[0].balance,100);assert.equal(result.observations[1].teamTotalCredit,21000);
     assert.equal(result.observations[0].billingCycle,'连续包年');assert.equal(result.observations[0].nextRenewalAt,new Date(1999999999000).toISOString());
     assert.equal(result.observations[1].teamSnapshot.creatorPlatformUserId,'u1');
     assert.equal(result.observations[1].teamSnapshot.membersComplete,true);
+    const teamFacts=normalizeObservation(result.observations[1]).creditSourceFacts;
+    assert.ok(teamFacts.some(item=>item.source==='user_credit'&&item.queryScope==='team_total'));
+    assert.ok(teamFacts.some(item=>item.source==='user_credit_history'&&item.queryScope==='team_total'));
+    assert.equal(validateIngest(normalizeObservation(result.observations[1]),Date.now()).rejectedCreditSourceFacts,0);
     assert.deepEqual(state,before);
     const history=requests.filter(x=>x.path.endsWith('user_credit_history'));
-    assert.deepEqual(history.map(x=>[x.team,x.body.cursor]),[[undefined,'personal-page'],['t1','team-page']]);
-    assert.ok(requests.every(x=>x.team!=='expired'&&x.team!=='visible-team'));
+    assert.deepEqual(history.map(x=>[x.team,x.body.cursor]),[[undefined,'personal-page'],['t1','team-page'],['expired','0']]);
+    assert.ok(requests.every(x=>x.team!=='visible-team'));
+    assert.equal(result.observations[2].subscriptionFacts[0].active,false);
+  },false,teamDiscovery);
+});
+test('scoped financial response keeps original platform key names and strips payment links',async()=>{
+  const api=scopedFixture([],()=>{},(path,{team})=>!team && path.endsWith('user_credit')?{
+    credit:{vip_credit:100,gift_credit:0,purchase_credit:0},credits_detail:{},
+    future_amount:123,futureAmount:456,checkout_url:'https://pay.example/checkout?token=private',
+    future_note:'ordinary billing metadata',
+  }:undefined);
+  await withPage(api,async()=>{
+    const raw=await readJimengPage({collectAllSpaces:true});
+    const personal=normalizeObservation(raw.observations[0]);
+    const payload=personal.creditSourceFacts.find(item=>item.source==='user_credit').payload;
+    assert.equal(payload.future_amount,123);
+    assert.equal(payload.futureAmount,456);
+    assert.equal(payload.future_note,'ordinary billing metadata');
+    assert.equal(Object.hasOwn(payload,'checkout_url'),false);
+    assert.equal(validateIngest(personal,Date.now()).rejectedCreditSourceFacts,0);
   },false,teamDiscovery);
 });
 test('all-space collection discards the whole batch when the active login context changes in flight',async()=>{
@@ -47,6 +72,85 @@ test('all-space collection discards the whole batch when the active login contex
   await withPage(scopedFixture(requests,()=>{state.version++;}),async value=>{
     state=value;const result=await readJimengPage({collectAllSpaces:true});
     assert.equal(result.status,'error');assert.equal(result.observations,undefined);
+  },false,teamDiscovery);
+});
+test('a stale credit-ready flag or missing visible space cannot block explicit fresh wallet reads',async()=>{
+  for (const missingVisibleAccount of [false,true]) {
+    const requests=[];
+    await withPage(scopedFixture(requests),async state=>{
+      const credit=window.__debugger.DreaminaCommercialFeatureService._commercialCreditService;
+      credit.isLocalCreditReady=false;
+      if(missingVisibleAccount)state.account=null;
+      const result=await readJimengPage({collectAllSpaces:true});
+      assert.equal(result.status,'ok');assert.equal(result.observations.length,3);
+      assert.deepEqual(result.observations.map(item=>[item.userId,item.balance]),[['u1',100],['u1',7700],['u1',7700]]);
+      assert.ok(result.diagnosticCodes.includes('account_read_recovered'));
+      assert.equal(credit.isLocalCreditReady,false);assert.equal(credit.localCredit,999999);
+      assert.ok(requests.every(request=>request.team!=='visible-team'));
+    },false,teamDiscovery);
+  }
+});
+test('scoped recovery remains self-contained after Chrome MAIN-world function serialization',async()=>{
+  let replaced=false;
+  await withPage(scopedFixture([],()=>{
+    if(replaced)return;replaced=true;
+    const feature=window.__debugger.DreaminaCommercialFeatureService;
+    feature._commercialCreditService={...feature._commercialCreditService};
+  }),async()=>{
+    const result=await vm.runInNewContext(`(${readJimengPage.toString()})({collectAllSpaces:true})`,{window,location,setTimeout,clearTimeout});
+    assert.equal(result.status,'ok');assert.equal(result.observations.length,3);
+    assert.ok(result.diagnosticCodes.includes('account_read_recovered'));
+  },false,teamDiscovery);
+});
+test('unready credit service without a working scoped endpoint never fabricates a fresh balance or login binding',async()=>{
+  await withPage({},async()=>{
+    window.__debugger.DreaminaCommercialFeatureService._commercialCreditService.isLocalCreditReady=false;
+    const result=await readJimengPage({collectAllSpaces:true});
+    assert.ok(result.observations.every(item=>item.status==='error'));
+    assert.ok(result.observations.every(item=>normalizeObservation(item).loginIdentity===undefined));
+    assert.ok(result.observations.every(item=>item.diagnosticCodes.includes('credit_api_unavailable')));
+    assert.equal(result.diagnosticCodes.includes('account_read_recovered'),false);
+  },false,teamDiscovery);
+});
+test('switching login keeps a completed old-wallet read and reacquires new login and independent cursors',async()=>{
+  const requests=[];let switched=false,state;
+  const oldSaved={'u1:personal:personal':{cursor:'old-personal-page'},'u2:personal:personal':{cursor:'new-personal-page'}};
+  const savedCopy=structuredClone(oldSaved);
+  await withPage(scopedFixture(requests,(path,{team})=>{
+    if(switched||team!=='t1'||!path.endsWith('user_credit'))return;
+    switched=true;state.version++;
+    window.__debugger.DreaminaCommercialFeatureService._commerceAccountPort.getSnapshot=()=>({hasLogin:true,userId:'u2',userProfile:{name:'新登录'}});
+  }),async value=>{
+    state=value;
+    const result=await readJimengPage({collectAllSpaces:true,previousCollections:oldSaved});
+    assert.equal(result.status,'ok');assert.equal(result.partial,true);
+    const valid=result.observations.filter(item=>item.status==='ok');
+    assert.deepEqual(valid.map(item=>[item.userId,item.accountType]),[['u1','personal'],['u2','personal'],['u2','team'],['u2','team']]);
+    assert.ok(valid.every(item=>item.balanceFresh!==false));
+    assert.ok(result.diagnosticCodes.includes('account_read_recovered'));
+    assert.deepEqual(oldSaved,savedCopy);
+    assert.deepEqual(requests.filter(item=>item.path.endsWith('user_credit_history')&&!item.team).map(item=>item.body.cursor),['old-personal-page','new-personal-page']);
+  },false,teamDiscovery);
+});
+test('a replaced page service is reacquired on the bounded retry even when UID and account key stay equal',async()=>{
+  const requests=[];let replaced=false;
+  await withPage(scopedFixture(requests,()=>{
+    if(replaced)return;replaced=true;
+    const feature=window.__debugger.DreaminaCommercialFeatureService;
+    window.__debugger.DreaminaCommercialFeatureService={...feature,_commercialCreditService:{...feature._commercialCreditService}};
+  }),async()=>{
+    const result=await readJimengPage({collectAllSpaces:true});
+    assert.equal(result.status,'ok');assert.equal(result.observations.length,3);
+    assert.ok(result.observations.every(item=>item.status==='ok'));
+    assert.ok(result.diagnosticCodes.includes('account_read_recovered'));
+    assert.equal(requests.filter(item=>item.path.endsWith('user_credit_history')).length,3);
+  },false,teamDiscovery);
+});
+test('expected UID is checked before starting a scoped request',async()=>{
+  const requests=[];
+  await withPage(scopedFixture(requests),async()=>{
+    const result=await readJimengPage({targetAccount:{accountType:'personal',accountKey:'personal'},expectedUserId:'previous-login'});
+    assert.equal(result.status,'error');assert.deepEqual(result.diagnosticCodes,['account_context_changed']);assert.equal(requests.length,0);
   },false,teamDiscovery);
 });
 test('one failed team detail does not prevent collecting a later healthy team',async()=>{
@@ -61,6 +165,19 @@ test('one failed team detail does not prevent collecting a later healthy team',a
     assert.deepEqual(detailCalls,['broken','healthy']);
     assert.deepEqual(result.observations.map(item=>item.teamId||'personal'),['personal','healthy']);
     assert.equal(result.observations[1].teamTotalCredit,21000);
+  },false,extra);
+});
+test('failed balance reads in one discovered team leave personal and other teams available',async()=>{
+  const data=teamDiscovery['commercial-team-workspace-service']._teamManager._teamworkDataService;
+  const extra={...teamDiscovery,'commercial-team-workspace-service':{_teamManager:{_teamworkDataService:{...data,
+    async getTeamList(){return {ok:true,value:{teamList:[{teamId:'broken'},{teamId:'healthy'}],hasMore:false}};},
+  }}}};
+  await withPage(scopedFixture([],(path,{team})=>{if(team==='broken'&&path.endsWith('user_credit'))throw new Error('fixture outage');}),async()=>{
+    const result=await readJimengPage({collectAllSpaces:true});
+    assert.equal(result.status,'ok');assert.equal(result.partial,true);
+    assert.deepEqual(result.observations.filter(item=>item.balanceFresh!==false).map(item=>item.teamId||'personal'),['personal','healthy']);
+    const broken=result.observations.find(item=>item.teamId==='broken');
+    assert.equal(broken.balanceFresh,false);assert.ok(broken.diagnosticCodes.includes('credit_balance_unavailable'));
   },false,extra);
 });
 async function withPage(api, run, team = false, extra = {}) {
@@ -92,15 +209,63 @@ test('missing credit API retains a verified login and resumes the previous ledge
     const normalized=normalizeObservation(raw);assert.equal(normalized.loginIdentity.platformUserId,'u1');assert.deepEqual(normalized.accounts,[]);assert.deepEqual(normalized.transactions,[]);
   });
 });
-test('all team credit requests failing still identify only the stable login, with no fake member or team balance',async()=>{
+test('failed team balances still try the independent history endpoint without inventing a balance',async()=>{
   let historyReads=0;
   await withPage({fetchUserCredit:async()=>{throw new Error('unavailable');},fetchUserCreditHistory:async()=>{historyReads++;return {ok:false};}},async()=>{
     const raw=await readJimengPage(),normalized=normalizeObservation(raw);
     assert.equal(raw.status,'ok');assert.equal(raw.partial,true);assert.equal(raw.balanceFresh,false);assert.equal(raw.canReadTeamTotal,false);
     assert.deepEqual(normalized.loginIdentity,{platformUserId:'u1',displayName:'测试'});
-    assert.deepEqual(normalized.accounts,[]);assert.deepEqual(normalized.transactions,[]);assert.equal(normalized.teams,undefined);assert.equal(historyReads,0);
+    assert.deepEqual(normalized.accounts,[]);assert.deepEqual(normalized.transactions,[]);assert.equal(normalized.teams,undefined);assert.equal(historyReads,1);
     assert.equal('balance' in raw,false);assert.equal('teamTotalCredit' in raw,false);
   },true);
+});
+test('history remains collectable when the balance format changes',async()=>{
+  const api={fetchUserCredit:async()=>({ok:true,value:{credit:{vipCredit:10}}}),
+    fetchUserCreditHistory:async()=>({ok:true,value:{records:[{historyId:'balance-independent',historyType:2,amount:5,
+      createTime:Math.floor(Date.now()/1000)-10,title:'生成消耗',userId:'u1'}],hasMore:false}})};
+  await withPage(api,async()=>{
+    const raw=await readJimengPage(),observation=normalizeObservation(raw);
+    assert.equal(raw.balanceFresh,false);
+    assert.equal(raw.records.length,1);
+    assert.equal(observation.accounts.length,0);
+    assert.equal(observation.transactions[0].eventId,'balance-independent');
+    assert.equal(observation.creditHistoryFacts[0].records[0].historyId,'balance-independent');
+  });
+});
+test('bounded credit-source snapshots keep unknown financial fields and remove credentials and content',async()=>{
+  const api={fetchUserCredit:async()=>({ok:true,value:{credit:{giftCredit:0,purchaseCredit:0,vipCredit:10},
+      futureSubscriptionCharge:12345,authkey:'credential'}}),
+    fetchUserCreditHistory:async()=>({ok:true,value:{records:[{historyId:'raw-1',historyType:7,amount:-3,
+      createTime:Math.floor(Date.now()/1000),futureLedgerField:'future value',prompt:'private creative content'}],hasMore:false}})};
+  await withPage(api,async()=>{
+    const got=normalizeObservation(await readJimengPage());
+    const balance=got.creditSourceFacts.find(f=>f.source==='user_credit').payload;
+    const history=got.creditSourceFacts.find(f=>f.source==='user_credit_history').payload;
+    assert.equal(balance.futureSubscriptionCharge,12345);
+    assert.equal('authkey' in balance,false);
+    assert.equal(history.data.records[0].futureLedgerField,'future value');
+    assert.equal('prompt' in history.data.records[0],false);
+    const validated=validateIngest(got,Date.now());
+    assert.equal(validated.rejectedCreditSourceFacts,0);
+    assert.equal(validated.creditSourceFacts.length,2);
+  });
+});
+test('large financial source arrays retain their final item when split into bounded facts',async()=>{
+  const records=Array.from({length:201},(_,index)=>({historyId:'history-'+index,amount:-1,futureLedgerField:index}));
+  await withPage({
+    fetchUserCredit:async()=>good(10),
+    fetchUserCreditHistory:async()=>({ok:true,value:{records,hasMore:false}}),
+  },async()=>{
+    const raw=await readJimengPage();
+    const normalized=normalizeObservation(raw);
+    const chunks=normalized.creditSourceFacts.filter(item=>item.source==='user_credit_history');
+    assert.equal(raw.sourceCapturePartial,undefined);
+    assert.equal(chunks[0].payload.part,'metadata');
+    assert.equal(chunks[0].payload.arrayFields[0].count,201);
+    assert.equal(chunks.at(-1).payload.offset,200);
+    assert.equal(chunks.at(-1).payload.items[0].historyId,'history-200');
+    assert.equal(validateIngest({...normalized,creditSourceFacts:chunks.slice(0,16)},Date.now()).rejectedCreditSourceFacts,0);
+  });
 });
 test('signed-out and not-ready page state never emits login identity',async()=>{
   await withPage({},async()=>{
@@ -151,6 +316,20 @@ test('partial ledger failure retains the old watermark and retries the failed pa
   await withPage(api,async()=>{
     const first=await readJimengPage({previousAccount:'u1:personal:personal',previousEventId:'old'});
     assert.equal(first.headEventId,'old');assert.equal(first.nextCursor,'next');assert.equal(first.pendingHeadEventId,'new');
+  });
+});
+test('numeric platform IDs and signed amounts survive the scoped page read',async()=>{
+  const api={fetchUserCredit:async()=>good(10),fetchUserCreditHistory:async()=>({ok:true,value:{hasMore:false,
+    records:[{historyId:12345,submitId:67890,historyType:9,amount:-7,createTime:Math.floor(Date.now()/1000),
+      userId:1001,title:'平台新类型',status:'Unknown'}]}})};
+  await withPage(api,async()=>{
+    const raw=await readJimengPage();
+    assert.equal(raw.headEventId,'12345');
+    assert.deepEqual([raw.records[0].historyId,raw.records[0].submitId,raw.records[0].amount,raw.records[0].userId],
+      ['12345','67890',-7,'1001']);
+    const normalized=normalizeObservation(raw);
+    assert.equal(normalized.transactions.length,0);
+    assert.equal(normalized.creditHistoryFacts[0].records[0].submitId,'67890');
   });
 });
 test('team pool uses independent fresh balance and preserves the charged platform member',async()=>{

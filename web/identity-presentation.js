@@ -16,7 +16,7 @@ export function identityPresentation(platformUserId, directory, fallbackNickname
   const nickname = nicknameValue(identity?.nickname, id) || (text(fallbackNickname) !== ownerName ? nicknameValue(fallbackNickname, id) : null);
   return {
     primary: ownerName || nickname || '未识别账号',
-    secondary: ownerName ? nickname || '平台昵称未获取' : '归属待映射',
+    secondary: ownerName ? nickname || '平台昵称未获取' : '未关联员工',
     ownerName,
     nickname,
     platformUserId: id,
@@ -41,7 +41,7 @@ export function accountPresentation(account = {}, directory, teams = []) {
     return {
       ...identity,
       primary: identity.ownerName || teamName,
-      secondary: identity.ownerName ? `${teamName} · 创建者` : creator.platformUserId ? '创建者归属待映射' : '创建者待确认',
+      secondary: identity.ownerName ? `${teamName} · 创建者` : creator.platformUserId ? '创建者未关联员工' : '创建者未获取',
       nickname: teamName,
       scopeLabel: '团队总积分',
     };
@@ -65,9 +65,9 @@ export function accountOptionLabel(account = {}, directory, teams = []) {
   if (account.scope === 'team_total') {
     const creator = teamCreator(team);
     const identity = identityPresentation(creator.platformUserId, directory, creator.displayName);
-    const owner = identity.ownerName ? `${identity.ownerName}（创建者）` : creator.platformUserId ? `${identity.nickname || idLabel}（创建者归属待映射）` : '创建者待确认';
+    const owner = identity.ownerName ? `${identity.ownerName}（创建者）` : creator.platformUserId ? `${identity.nickname || idLabel}（创建者未关联员工）` : '创建者未获取';
     return [owner, teamName, presentation.scopeLabel].join(' · ');
   }
-  const owner = presentation.ownerName || `${presentation.nickname || idLabel}（归属待映射）`;
+  const owner = presentation.ownerName || `${presentation.nickname || idLabel}（未关联员工）`;
   return [owner, presentation.ownerName ? presentation.nickname || idLabel : null, account.scope === 'team_member' ? teamName : null, presentation.scopeLabel].filter(Boolean).join(' · ');
 }

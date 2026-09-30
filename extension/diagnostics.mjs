@@ -4,8 +4,14 @@ export const diagnosticLabels = Object.freeze({
   upload_recovered:'数据上传已恢复',connection_failed:'采集服务暂时无法连接',connection_recovered:'采集服务连接已恢复',
   configuration_invalid:'插件配置未就绪',command_failed:'管理者发起的同步暂未完成',
   operation_saved:'操作凭证已保存',operation_uploaded:'操作凭证已上报',operation_upload_failed:'操作凭证待补传',
+  operation_rejected:'操作凭证被拒收，已保留本机',
   operation_save_failed:'操作凭证暂未保存',operation_queue_full:'操作凭证队列已满',
   operation_bridge_full:'页面操作凭证积压，部分凭证未保存',
+  page_not_ready:'即梦页面服务未就绪',page_login_required:'即梦登录已失效',
+  account_context_changed:'账号切换中，等待重新读取',credit_api_unavailable:'积分读取接口暂不可用',
+  credit_balance_unavailable:'余额接口未返回有效数据',credit_history_partial:'部分积分流水待补齐',
+  team_discovery_partial:'部分团队暂未读取成功',account_read_recovered:'账号读取已自动恢复',
+  source_capture_partial:'平台响应超出安全采集上限',
 });
 export function sanitizeDiagnostic(input) {
   if (!input || !Object.hasOwn(diagnosticLabels,input.code) || typeof input.id !== 'string' ||

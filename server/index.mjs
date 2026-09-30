@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isIP } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,8 @@ import { readCollectorRelease, collectorVersionStatus } from './collector-releas
 import { createAdminPassword } from './admin-password.mjs';
 import { installHelperEntries } from './install-helper.mjs';
 import { installGuideEntries } from './install-guide.mjs';
+import { adminObserverZip } from './admin-observer-package.mjs';
+import { validatePlatformPrices } from './platform-prices.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_BODY = 512 * 1024;
@@ -17,6 +20,7 @@ const MAX_BODY = 512 * 1024;
 const INGEST_BURST = 40;
 const INGEST_REFILL_MS = 1000;
 const extensionPaths = new Set(['/api/ingest','/api/collector/status','/api/collector/commands','/api/collector/diagnostics','/api/collector/extension.zip','/api/admin/extension-login']);
+const enrollmentPaths = new Set(['/api/enrollment/requests','/api/enrollment/request','/api/enrollment/claim']);
 const commandResultPath = /^\/api\/collector\/commands\/([^/]+)\/result$/;
 const isExtensionPath = pathname => extensionPaths.has(pathname) || commandResultPath.test(pathname);
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon','.json':'application/json; charset=utf-8','.woff2':'font/woff2'};
@@ -56,16 +60,30 @@ function readJson(request) {
   });
 }
 
-export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(root,'dist'),extensionDir=path.join(root,'extension'),clock=Date.now,publicOrigin=null,managementOrigin=null,collectorInternalOrigin=null,bindHost='127.0.0.1'}={}) {
-  for(const value of [publicOrigin,managementOrigin,collectorInternalOrigin].filter(Boolean)) {
+export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(root,'dist'),extensionDir=path.join(root,'extension'),clock=Date.now,publicOrigin=null,managementOrigin=null,collectorInternalOrigin=null,enrollmentOrigin=null,bindHost='127.0.0.1'}={}) {
+  for(const value of [publicOrigin,managementOrigin,collectorInternalOrigin,enrollmentOrigin].filter(Boolean)) {
     const url=new URL(value);
     if(!['http:','https:'].includes(url.protocol)||url.origin!==value||url.username||url.password)throw new Error('服务地址必须是完整的 HTTP(S) origin');
   }
-  const configuredOrigins=[...new Set([managementOrigin,publicOrigin,collectorInternalOrigin].filter(Boolean))];
+  const collectorOrigins=[...new Set([publicOrigin,collectorInternalOrigin].filter(Boolean))];
+  const sameHost=(left,right)=>Boolean(left&&right&&new URL(left).host===new URL(right).host);
+  if(managementOrigin&&collectorOrigins.some(value=>sameHost(value,managementOrigin)))throw new Error('管理地址必须与采集地址隔离');
+  if(enrollmentOrigin){
+    const portal=new URL(enrollmentOrigin);
+    if(sameHost(enrollmentOrigin,managementOrigin))throw new Error('员工领取入口必须与管理地址隔离');
+    const existingCollector=collectorOrigins.find(value=>sameHost(value,enrollmentOrigin));
+    if(existingCollector&&existingCollector!==enrollmentOrigin)throw new Error('员工领取入口与采集地址协议不一致');
+    // A separately exposed portal must use HTTPS. The existing collector
+    // origins may also serve enrollment when explicitly configured as HTTP.
+    if(!existingCollector&&portal.protocol!=='https:'&&!['localhost','127.0.0.1','[::1]'].includes(portal.hostname))throw new Error('独立员工领取入口必须使用 HTTPS');
+  }
+  const enrollmentOrigins=new Set([...collectorOrigins,enrollmentOrigin].filter(Boolean));
+  const configuredOrigins=[...new Set([managementOrigin,publicOrigin,collectorInternalOrigin,enrollmentOrigin].filter(Boolean))];
   const secret=readAdminSecret(dataDir), store=createStore({dataDir,secret,clock});
   const adminPassword=createAdminPassword(store);
   const collectorRelease=()=>({...readCollectorRelease(extensionDir),announcedVersion:null,announcedAt:null,...store.getReleaseAnnouncement()});
   const sessions=new Map(), loginFailures=new Map(), loginTickets=new Map();
+  const enrollmentAttempts=new Map();
   const ingestBuckets=new Map();
   let nextIngestSweep=0;
   let closed=false;
@@ -123,6 +141,21 @@ export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(ro
     if(!device)fail('采集设备凭据无效或已停用',401);
     return device;
   }
+  function enrollmentToken(request){
+    const value=(request.headers.cookie??'').split(';').map(item=>item.trim()).find(item=>item.startsWith('jmc_enroll='));
+    return value?.slice('jmc_enroll='.length)??null;
+  }
+  function enrollmentRateLimit(request){
+    const remote=request.socket.remoteAddress??'';
+    const forwarded=request.headers['x-real-ip'];
+    // Only the local reverse proxy may supply the original client address.
+    const ip=(['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remote)&&typeof forwarded==='string'&&isIP(forwarded))?forwarded:remote;
+    const at=clock(),entry=enrollmentAttempts.get(ip);
+    if(entry?.until>at && entry.count>=15)fail('申请过于频繁，请稍后再试',429);
+    enrollmentAttempts.set(ip,{count:entry?.until>at?entry.count+1:1,until:entry?.until>at?entry.until:at+60*60_000});
+    if(enrollmentAttempts.size>1000)for(const [key,value] of enrollmentAttempts)if(value.until<=at)enrollmentAttempts.delete(key);
+  }
+  function requireOrigin(request,origin,message){if(request.headers.origin!==origin)fail(message,403);}
   function limitIngest(request,response,installationId){
     const at=clock();
     if(at>=nextIngestSweep){
@@ -180,8 +213,12 @@ export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(ro
     response.setHeader('X-Content-Type-Options','nosniff');response.setHeader('Referrer-Policy','no-referrer');
     response.setHeader('Cache-Control','no-store');
     const origin=originForRequest(request),url=new URL(request.url,origin),pathname=url.pathname;
-    const collectionOnly=managementOrigin && origin!==managementOrigin;
-    if(collectionOnly && pathname!=='/api/health' && (!isExtensionPath(pathname)||pathname==='/api/admin/extension-login'))fail('接口不存在',404);
+    const collectorOrigin=collectorOrigins.includes(origin);
+    const enrollmentAllowed=enrollmentOrigins.has(origin)&&origin!==managementOrigin;
+    if(configuredOrigins.length&&origin!==managementOrigin){
+      const collectorPath=collectorOrigin&&(pathname==='/api/health'||(isExtensionPath(pathname)&&pathname!=='/api/admin/extension-login'));
+      if(!collectorPath&&!(enrollmentAllowed&&enrollmentPaths.has(pathname)))fail('接口不存在',404);
+    }
     if(/^\/preview-(?:data|demo)\.json\/?$/.test(decodeURIComponent(pathname)))fail('文件不存在',404);
     checkOrigin(request,response,pathname,origin);
     if(request.method==='OPTIONS'){
@@ -191,6 +228,27 @@ export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(ro
       const requested=(request.headers['access-control-request-headers']??'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
       if(requested.some(key=>!['authorization','content-type'].includes(key)))fail('预检请求头不被允许',403);
       response.writeHead(204,{'Access-Control-Allow-Methods':allow,'Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'});response.end();return;
+    }
+    if(enrollmentPaths.has(pathname)){
+      if(!enrollmentAllowed)fail('接口不存在',404);
+      if(pathname==='/api/enrollment/requests'){
+        method(request,response,['POST']);requireOrigin(request,origin,'请从员工领取页面提交申请');
+        enrollmentRateLimit(request);
+        const body=shape(await readJson(request),['name','department'],'领取申请');
+        const result=store.createRequest(body,enrollmentToken(request));
+        response.setHeader('Set-Cookie',`jmc_enroll=${result.token}; HttpOnly; SameSite=Strict; Path=/api/enrollment; Max-Age=259200${origin.startsWith('https:')?'; Secure':''}`);
+        json(response,result.reused?200:201,result.request);return;
+      }
+      if(pathname==='/api/enrollment/request'){
+        method(request,response,['GET']);json(response,200,store.ownRequest(enrollmentToken(request)));return;
+      }
+      method(request,response,['POST']);requireOrigin(request,origin,'请从员工领取页面下载');
+      shape(await readJson(request),[],'领取请求');
+      if(!publicOrigin)fail('采集端服务地址未配置',503);
+      const token=enrollmentToken(request),device=store.claimableInstallation(token),zip=await extensionZip(device,origin);
+      store.recordClaim(token);
+      response.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':`attachment; filename="jimeng-collector-${device.id}.zip"`,'Cache-Control':'no-store, private','Content-Length':zip.length});
+      response.end(zip);return;
     }
     if(pathname==='/api/health'){method(request,response,['GET']);json(response,200,{ok:true,version:'1.0.0'});return;}
     if(pathname==='/api/session'){method(request,response,['GET']);const authenticated=Boolean(session(request));json(response,200,{authenticated,role:authenticated?'admin':null});return;}
@@ -289,10 +347,46 @@ export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(ro
       if(candidates.includes('*')||candidates.includes(`"${version}"`)){response.writeHead(304,headers);response.end();return;}
       const data=store.dashboard();
       response.writeHead(200,{...headers,'Content-Type':'application/json; charset=utf-8'});
-      response.end(JSON.stringify({...data,adminPasswordConfigured:adminPassword.configured(),collectorRelease:release,installations:data.installations.map(device=>({...device,...collectorVersionStatus(device,release)}))}));return;
+      const enrollmentUrls={external:publicOrigin?`${publicOrigin}/join/`:null,internal:collectorInternalOrigin?`${collectorInternalOrigin}/join/`:null};
+      response.end(JSON.stringify({...data,adminPasswordConfigured:adminPassword.configured(),collectorRelease:release,enrollmentUrl:enrollmentUrls.external??(enrollmentOrigin?`${enrollmentOrigin}/join/`:null),enrollmentUrls,installations:data.installations.map(device=>({...device,...collectorVersionStatus(device,release)}))}));return;
+    }
+    const teamManagementMatch=/^\/api\/teams\/([^/]+)\/management$/.exec(pathname);
+    if(teamManagementMatch){
+      method(request,response,['PATCH']);admin(request);requireOrigin(request,origin,'请从管理页面管理团队');
+      let spaceId;try{spaceId=decodeURIComponent(teamManagementMatch[1]);}catch{fail('团队空间 ID 格式不正确');}
+      const body=shape(await readJson(request),['archived'],'团队状态');
+      json(response,200,store.setTeamArchived(spaceId,body.archived));return;
+    }
+    if(pathname==='/api/admin/enrollment-requests'){
+      method(request,response,['GET']);admin(request);json(response,200,{requests:store.listRequests()});return;
+    }
+    const enrollmentDecision=/^\/api\/admin\/enrollment-requests\/([^/]+)\/(approve|reject)$/.exec(pathname);
+    if(enrollmentDecision){
+      method(request,response,['POST']);admin(request);requireOrigin(request,origin,'请从管理页面处理申请');
+      const id=decodeURIComponent(enrollmentDecision[1]),action=enrollmentDecision[2];
+      const body=shape(await readJson(request),action==='approve'?['employeeId','installationId']:[],'领取申请处理');
+      if(action==='reject'){json(response,200,store.rejectRequest(id));return;}
+      json(response,200,store.approveRequest(id,identifier(body.employeeId,'员工 ID'),body.installationId===undefined?null:identifier(body.installationId,'采集端 ID')));return;
+    }
+    if(pathname==='/api/reference-rates'){
+      method(request,response,['POST']);admin(request);
+      json(response,201,store.setReferenceRate(await readJson(request)));return;
+    }
+    if(pathname==='/api/admin/platform-prices'){
+      method(request,response,['GET','POST']);admin(request);
+      if(request.method==='GET'){json(response,200,{catalog:store.getPlatformPrices()});return;}
+      if(request.headers.origin!==origin)fail('请从管理页面同步平台标价',403);
+      const input=validatePlatformPrices(await readJson(request),clock());
+      json(response,200,store.setPlatformPrices(input));return;
     }
     if(pathname==='/api/installations'){
       method(request,response,['POST']);admin(request);json(response,201,store.createInstallation(validateInstallation(await readJson(request))));return;
+    }
+    if(pathname==='/api/admin/observer-extension.zip'){
+      method(request,response,['GET']);admin(request);
+      const zip=adminObserverZip(path.join(root,'admin-extension'),managementOrigin??origin);
+      response.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="jimeng-admin-observer.zip"','Cache-Control':'no-store, private','Content-Length':zip.length});
+      response.end(zip);return;
     }
     if(pathname==='/api/departments'||pathname==='/api/employees'){
       method(request,response,['GET','POST']);admin(request);
@@ -384,7 +478,7 @@ export function createApp({dataDir=path.join(root,'.local'),distDir=path.join(ro
 
 export async function start(options={}){const app=createApp(options);await app.start(options.port??4318);return app;}
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const app=await start({port:Number(process.env.PORT??4318),bindHost:process.env.BIND_HOST??'127.0.0.1',...(process.env.DATA_DIR?{dataDir:process.env.DATA_DIR}:{}),publicOrigin:process.env.PUBLIC_ORIGIN||null,managementOrigin:process.env.MANAGEMENT_ORIGIN||null,collectorInternalOrigin:process.env.COLLECTOR_INTERNAL_ORIGIN||null});
+  const app=await start({port:Number(process.env.PORT??4318),bindHost:process.env.BIND_HOST??'127.0.0.1',...(process.env.DATA_DIR?{dataDir:process.env.DATA_DIR}:{}),publicOrigin:process.env.PUBLIC_ORIGIN||null,managementOrigin:process.env.MANAGEMENT_ORIGIN||null,collectorInternalOrigin:process.env.COLLECTOR_INTERNAL_ORIGIN||null,enrollmentOrigin:process.env.ENROLLMENT_ORIGIN||null});
   process.stdout.write('即梦积分管家服务已启动\n');
   for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{app.close().then(()=>process.exit(0));});
 }

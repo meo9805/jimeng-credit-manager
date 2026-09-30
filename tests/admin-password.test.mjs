@@ -55,8 +55,8 @@ test('password attempts retain login throttling and management routes stay off t
   const f=await fixture(t),admin=await f.login({secret:f.secret});await f.call('/api/admin/password','POST',{password},admin.headers);
   for(let index=0;index<10;index++)assert.equal((await f.login({password:'wrong-password'})).response.status,401);
   assert.equal((await f.login({password})).response.status,429);f.advance(15*60_000+1);assert.equal((await f.login({password})).response.status,200);
-  const configured=createApp({dataDir:f.dataDir,managementOrigin:'http://example.test:18419',publicOrigin:'http://public.example.test:18418'}),base=await configured.start(0);t.after(()=>configured.close());
-  const publicStatus=(route,method='POST')=>new Promise((resolve,reject)=>{const request=http.request(base+route,{method,headers:{Host:'public.example.test:18418','Content-Type':'application/json'}},response=>{response.resume();response.on('end',()=>resolve(response.statusCode));});request.on('error',reject);request.end(method==='POST'?'{}':undefined);});
+  const configured=createApp({dataDir:f.dataDir,managementOrigin:'http://192.0.2.10:18419',publicOrigin:'http://198.51.100.10:18418'}),base=await configured.start(0);t.after(()=>configured.close());
+  const publicStatus=(route,method='POST')=>new Promise((resolve,reject)=>{const request=http.request(base+route,{method,headers:{Host:'198.51.100.10:18418','Content-Type':'application/json'}},response=>{response.resume();response.on('end',()=>resolve(response.statusCode));});request.on('error',reject);request.end(method==='POST'?'{}':undefined);});
   for(const route of ['/api/admin/password','/api/admin/login','/api/collector-release/publish'])assert.equal(await publicStatus(route),404);
   assert.equal(await publicStatus('/api/collector/extension.zip','GET'),401,'public package route still requires scoped collector authentication');
 });

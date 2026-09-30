@@ -1,0 +1,28 @@
+.enrollment-requests-panel .panel-title { padding-bottom: 14px; flex-wrap: wrap; }
+.enrollment-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; min-width: 0; }
+.enrollment-heading-actions a { font-size: 12px; }
+.enrollment-request { display: grid; grid-template-columns: minmax(160px, .85fr) minmax(300px, 1.8fr) auto; gap: 18px; align-items: end; padding: 15px 21px; border-top: 1px solid var(--line); }
+.enrollment-applicant { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.enrollment-applicant strong { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.enrollment-applicant span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.enrollment-applicant small { color: var(--muted); }
+.enrollment-assignment { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.enrollment-assignment > * { min-width: 190px; flex: 1; }
+.enrollment-actions { display: flex; gap: 8px; white-space: nowrap; align-items: center; padding-bottom: 1px; }
+.enrollment-requests-message { color: var(--muted); padding: 0 21px 18px; font-size: 12px; overflow-wrap: anywhere; }
+.enrollment-recent { border-top: 1px solid var(--line); padding: 12px 21px 14px; color: var(--muted); font-size: 12px; }
+.enrollment-recent summary { cursor: pointer; width: max-content; }
+.enrollment-recent p { display: flex; gap: 16px; padding: 8px 0; min-width: 0; }
+.enrollment-recent strong { min-width: 100px; color: var(--ink); }
+.enrollment-recent small { margin-left: auto; }
+@media (max-width: 1100px) { .enrollment-request { grid-template-columns: 1fr; align-items: start; gap: 12px; } .enrollment-assignment { align-items: flex-start; } }
+@media (max-width: 600px) {
+  .enrollment-heading-actions { width: 100%; }
+  .enrollment-request { padding: 15px 16px; }
+  .enrollment-assignment > * { min-width: 0; }
+  .enrollment-requests-message { padding-left: 16px; padding-right: 16px; }
+  .enrollment-recent { padding-left: 16px; padding-right: 16px; }
+  .enrollment-recent p { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; }
+  .enrollment-recent strong { min-width: 0; overflow-wrap: anywhere; }
+  .enrollment-recent small { grid-column: 1 / -1; margin-left: 0; }
+}

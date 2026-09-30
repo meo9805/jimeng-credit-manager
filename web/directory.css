@@ -2,7 +2,7 @@
 .directory-select { display: block; width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid #dde4f0; border-radius: 7px; background: #fff; color: #465976; font: inherit; }
 .directory-select:focus { outline: 2px solid #8bb4ff; outline-offset: 1px; }
 .directory-select:disabled { opacity: .6; }
-.directory-readonly { display: block; padding: 10px 12px; min-height: 40px; border-radius: 7px; background: #f4f7fc; color: #52647d; font-size: 14px; }
+.directory-readonly { display: block; padding: 10px 12px; min-height: 40px; border-radius: 7px; background: #f4f7fc; color: #52647d; font-size: 14px; overflow-wrap: anywhere; }
 .configuration-form > .text-button, .owner-form > .text-button { margin-top: 12px; }
 .directory-grid .panel { margin-bottom: 0; }
 .directory-grid .panel-title { flex-wrap: wrap; }

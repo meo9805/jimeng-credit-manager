@@ -1,0 +1,10 @@
+.data-management-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.data-management-panel > details { padding: 0 22px 20px; color: var(--muted); font-size: 12px; }
+.data-management-panel > details > summary { cursor: pointer; width: fit-content; }
+.data-management-panel > details > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+.data-management-content { margin-top: 16px; border-top: 1px solid var(--line); }
+.data-management-content dl > div { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.data-management-content dt { flex: 1; }
+.data-management-content dd { color: var(--ink); }
+.data-management-content button { background: none; border: 0; padding: 0; font-size: 12px; color: var(--blue); }
+.data-management-content p { margin: 12px 0 0; line-height: 1.8; }

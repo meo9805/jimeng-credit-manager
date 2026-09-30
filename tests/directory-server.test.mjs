@@ -38,7 +38,7 @@ test('directory references propagate rename and transfer without rewriting opera
   const other=store.createDepartment({name:'农资'});store.patchEmployee(employee.id,{departmentId:other.id});
   dashboard=store.dashboard();assert.equal(dashboard.identities[0].department,'农资');assert.equal(dashboard.installations[0].departmentId,other.id);
   assert.equal(dashboard.accounts[0].ownerDepartmentId,department.id,'wallet cost department stays explicitly assigned');
-  assert.deepEqual(dashboard.transactions,history);assert.equal(history[0].operatorName,null);assert.equal(history[0].attribution,'unconfirmed');
+  assert.deepEqual(dashboard.transactions.map(({ownershipSnapshot,...row})=>row),history.map(({ownershipSnapshot,...row})=>row));assert.equal(dashboard.transactions[0].ownershipSnapshot.department,'农资');assert.equal(history[0].operatorName,null);assert.equal(history[0].attribution,'unconfirmed');
   store.patchIdentity('person-1',{employeeId:null});
   assert.equal(store.dashboard().identities[0].realName,null);assert.equal(store.dashboard().identities[0].department,null);
 });

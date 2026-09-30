@@ -18,7 +18,7 @@ foreach ($b in @(@('Chrome','Google\Chrome\Application\chrome.exe','chrome://ext
 }
 if (!$choices.Count) { throw '未找到 Chrome 或 Edge，请手动安装。' }
 Write-Host '即梦采集端安装助手'
-Write-Host '请先登录本人的即梦账号。'
+Write-Host '请先登录管理员安排的即梦账号。'
 for ($i = 0; $i -lt $choices.Count; $i++) { Write-Host (('{0}. {1}' -f ($i + 1), $choices[$i].Name)) }
 $answer = Read-Host '输入浏览器序号，直接回车取消'
 if ([string]::IsNullOrWhiteSpace($answer)) { exit 0 }
@@ -77,7 +77,7 @@ on run argv
   set browserNames to {}
   if item 1 of argv is not "" then set end of browserNames to "Chrome"
   if item 2 of argv is not "" then set end of browserNames to "Edge"
-  set choice to choose from list browserNames with title "即梦采集端安装助手" with prompt "请先在准备安装的浏览器中登录本人的即梦账号，再选择浏览器。" OK button name "打开安装页" cancel button name "取消"
+  set choice to choose from list browserNames with title "即梦采集端安装助手" with prompt "请先在准备安装的浏览器中登录管理员安排的即梦账号，再选择浏览器。" OK button name "打开安装页" cancel button name "取消"
   if choice is false then return ""
   return item 1 of choice
 end run
@@ -94,7 +94,7 @@ printf '%s' "$script_dir" | /usr/bin/pbcopy
 /usr/bin/open "$script_dir"
 /usr/bin/osascript - "$script_dir" "$extension_page" <<'APPLESCRIPT'
 on run argv
-  display dialog "插件文件夹路径已复制。" & return & return & "1. 在浏览器扩展页开启开发者模式。" & return & "2. 点击加载已解压的扩展程序（或加载解压缩的扩展）。" & return & "3. 选择当前解压文件夹；选择窗口可按 ⌘⇧G，再粘贴路径。" & return & return & "请保留这个文件夹。浏览器显示即梦积分管家后，安装才完成；再刷新本人的即梦页面。" & return & return & "若未打开扩展页，请在浏览器地址栏输入：" & item 2 of argv & return & "插件文件夹：" & item 1 of argv buttons {"知道了"} default button "知道了" with title "请在浏览器中完成安装"
+  display dialog "插件文件夹路径已复制。" & return & return & "1. 在浏览器扩展页开启开发者模式。" & return & "2. 点击加载已解压的扩展程序（或加载解压缩的扩展）。" & return & "3. 选择当前解压文件夹；选择窗口可按 ⌘⇧G，再粘贴路径。" & return & return & "请保留这个文件夹。浏览器显示即梦积分管家后，安装才完成；再刷新即梦页面。" & return & return & "若未打开扩展页，请在浏览器地址栏输入：" & item 2 of argv & return & "插件文件夹：" & item 1 of argv buttons {"知道了"} default button "知道了" with title "请在浏览器中完成安装"
 end run
 APPLESCRIPT
 `;

@@ -4,8 +4,8 @@ import { matchesActualOperator, actualOperatorOptions, matchesIdentityAssignment
 import { matchesAccountOwner, identityDirectory } from '../web/identities.js';
 
 test('borrowed-account consumption separates the actual employee from the account owner', () => {
-  const directory = identityDirectory([{ platformUserId: 'xia-account', employeeId: 'xia', realName: '示例员工甲', departmentId: 'video' }]);
-  const transaction = Object.freeze({ kind: 'consume', amount: -100, chargedPlatformUserId: 'xia-account', attribution: 'matched', operatorEmployeeId: 'ma', operatorName: '示例员工庚' });
+  const directory = identityDirectory([{ platformUserId: 'xia-account', employeeId: 'xia', realName: '夏意然', departmentId: 'video' }]);
+  const transaction = Object.freeze({ kind: 'consume', amount: -100, chargedPlatformUserId: 'xia-account', attribution: 'matched', operatorEmployeeId: 'ma', operatorName: '马亚波' });
   assert.equal(matchesActualOperator(transaction, 'employee:ma'), true);
   assert.equal(matchesActualOperator(transaction, 'employee:xia'), false);
   assert.equal(matchesAccountOwner(transaction, directory, 'employee:xia'), true);
@@ -13,7 +13,7 @@ test('borrowed-account consumption separates the actual employee from the accoun
 });
 
 test('unknown operators never derive from charged accounts or platform automatic events', () => {
-  for (const transaction of [{ kind: 'consume', attribution: 'unconfirmed', chargedPlatformUserId: 'ma' }, { kind: 'consume', operatorEmployeeId: 'ma', operatorName: '示例员工庚', attribution: 'unconfirmed' }]) {
+  for (const transaction of [{ kind: 'consume', attribution: 'unconfirmed', chargedPlatformUserId: 'ma' }, { kind: 'consume', operatorEmployeeId: 'ma', operatorName: '马亚波', attribution: 'unconfirmed' }]) {
     assert.equal(matchesActualOperator(transaction, '__unconfirmed'), true);
     assert.equal(matchesActualOperator(transaction, 'employee:ma'), false);
   }

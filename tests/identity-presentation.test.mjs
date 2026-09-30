@@ -21,7 +21,7 @@ test('employee assignment is primary and a known platform nickname stays seconda
   });
   const unmapped = identityPresentation('unknown-987654', directory);
   assert.equal(unmapped.primary, '待归属昵称');
-  assert.equal(unmapped.secondary, '归属待映射');
+  assert.equal(unmapped.secondary, '未关联员工');
   assert.equal(unmapped.ownerName, null);
 });
 
@@ -56,7 +56,7 @@ test('team pool owner comes only from the confirmed creator, never the reader or
   assert.equal(noTeam.primary, '平台团队甲');
   assert.equal(noTeam.ownerName, null);
   assert.equal(noTeam.platformUserId, null);
-  assert.equal(noTeam.secondary, '创建者待确认');
+  assert.equal(noTeam.secondary, '创建者未获取');
 });
 
 test('one roster creator is accepted; conflicting roles do not establish an owner', () => {
@@ -65,15 +65,15 @@ test('one roster creator is accepted; conflicting roles do not establish an owne
   const conflict = { ...rosterOnly, members: rosterOnly.members.map(member => ({ ...member, role: 'creator' })) };
   assert.equal(accountPresentation(pool, directory, [conflict]).ownerName, null);
   const unknownCreator = { ...team, creatorPlatformUserId: 'unknown-987654' };
-  assert.equal(accountPresentation(pool, directory, [unknownCreator]).secondary, '创建者归属待映射');
+  assert.equal(accountPresentation(pool, directory, [unknownCreator]).secondary, '创建者未关联员工');
 });
 
 test('account options distinguish employee, platform nickname and team without misidentifying pool readers', () => {
   assert.equal(accountOptionLabel({ ...pool, scope: 'personal' }, directory, [team]), '员工乙 · 平台昵称乙 · 个人钱包');
   assert.equal(accountOptionLabel({ ...pool, scope: 'team_member' }, directory, [team]), '员工乙 · 平台昵称乙 · 平台团队甲 · 团队成员额度');
   assert.equal(accountOptionLabel(pool, directory, [team]), '员工甲（创建者） · 平台团队甲 · 团队总积分');
-  assert.equal(accountOptionLabel({ scope: 'personal', platformUserId: 'unknown-987654' }, directory), '待归属昵称（归属待映射） · 个人钱包');
-  assert.equal(accountOptionLabel({ scope: 'personal', platformUserId: 'unseen-998877' }, directory), 'ID 998877（归属待映射） · 个人钱包');
+  assert.equal(accountOptionLabel({ scope: 'personal', platformUserId: 'unknown-987654' }, directory), '待归属昵称（未关联员工） · 个人钱包');
+  assert.equal(accountOptionLabel({ scope: 'personal', platformUserId: 'unseen-998877' }, directory), 'ID 998877（未关联员工） · 个人钱包');
   assert.equal(accountOptionLabel({ scope: 'personal', platformUserId: 'named-112233' }, directory), '员工丙 · ID 112233 · 个人钱包');
   assert.doesNotMatch(accountOptionLabel(pool, directory, []), /员工乙|人工成本负责人/);
 });

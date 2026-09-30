@@ -1,0 +1,139 @@
+.platform-prices { color: var(--ink); }
+.platform-prices-toolbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 14px;
+  padding: 16px 22px; border-bottom: 1px solid var(--line);
+}
+.platform-prices-toolbar time {
+  color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.platform-prices-scenes {
+  display: flex; align-items: center; gap: 5px; padding: 3px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--theme-inset, #f5f7fa);
+}
+.platform-prices-scenes button {
+  border: 0; border-radius: 6px; background: transparent;
+  color: var(--theme-secondary, #64748b); min-height: 34px; padding: 0 12px;
+  font-size: 13px; font-weight: 500; white-space: nowrap;
+}
+.platform-prices-scenes button.active {
+  background: var(--theme-raised, #fff); box-shadow: 0 1px 4px #13274816;
+  color: var(--blue); font-weight: 650;
+}
+.platform-price-matrix { overflow-x: auto; padding: 16px 22px 22px; }
+.platform-price-matrix-head, .platform-price-row {
+  display: grid;
+  grid-template-columns: minmax(245px, 1.35fr) repeat(var(--price-columns), minmax(150px, 1fr));
+  min-width: 880px;
+}
+.platform-price-matrix.is-team .platform-price-matrix-head,
+.platform-price-matrix.is-team .platform-price-row { min-width: 620px; }
+.platform-price-matrix-head {
+  align-items: center; padding: 0 0 10px; color: var(--muted);
+  font-size: 12px; font-weight: 500;
+}
+.platform-price-matrix-head > span { padding: 0 18px; }
+.platform-price-row {
+  align-items: stretch; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--theme-raised, #fff); font-variant-numeric: tabular-nums;
+}
+.platform-price-row + .platform-price-row { margin-top: 10px; }
+.platform-price-plan { min-width: 0; padding: 18px 20px; }
+.platform-price-plan h2 {
+  margin: 0; color: var(--ink); font-size: 16px; font-weight: 650; line-height: 1.35;
+}
+.platform-price-credit {
+  margin-top: 11px; color: var(--theme-secondary, #52647d); font-size: 13px;
+}
+.platform-price-tier-picker {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 13px;
+}
+.platform-price-tier-picker button {
+  min-height: 29px; padding: 3px 7px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--theme-inset, #f5f7fa);
+  color: var(--theme-secondary, #52647d); font-size: 12px; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.platform-price-tier-picker button.active {
+  border-color: var(--blue); background: var(--theme-accent-surface, #eef4ff);
+  color: var(--blue); font-weight: 700;
+}
+.platform-price-tier-picker > span { margin-left: 2px; color: var(--muted); font-size: 12px; }
+.platform-price-seat-picker {
+  display: flex; align-items: center; gap: 9px; max-width: 260px; margin-top: 12px;
+}
+.platform-price-seat-picker > button {
+  flex: 0 0 26px; width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--theme-inset, #f5f7fa); color: var(--ink);
+  font-size: 17px; line-height: 1;
+}
+.platform-price-seat-picker > button:disabled { opacity: .4; cursor: not-allowed; }
+.platform-price-seat-picker strong { flex: 0 0 36px; font-size: 13px; white-space: nowrap; }
+.platform-price-seat-picker input[type="range"] {
+  display: block; flex: 1; min-width: 56px; height: 20px; padding: 0;
+  border: 0; background: transparent; appearance: none; cursor: pointer;
+}
+.platform-price-seat-picker input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px; border-radius: 5px;
+  background: linear-gradient(to right, var(--blue) var(--step-progress), var(--line) var(--step-progress));
+}
+.platform-price-seat-picker input[type="range"]::-moz-range-track {
+  height: 5px; border-radius: 5px; background: var(--line);
+}
+.platform-price-seat-picker input[type="range"]::-moz-range-progress {
+  height: 5px; border-radius: 5px; background: var(--blue);
+}
+.platform-price-seat-picker input[type="range"]::-webkit-slider-thumb {
+  width: 17px; height: 17px; margin-top: -6px; border: 3px solid var(--blue);
+  border-radius: 50%; background: var(--theme-raised, #fff); appearance: none;
+  box-shadow: 0 1px 4px #13274830;
+}
+.platform-price-seat-picker input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; border: 3px solid var(--blue);
+  border-radius: 50%; background: var(--theme-raised, #fff);
+  box-shadow: 0 1px 4px #13274830;
+}
+.platform-price-quote {
+  display: flex; flex-direction: column; justify-content: center; min-width: 0;
+  padding: 18px 14px; border-left: 1px solid var(--line);
+}
+.platform-price-amount {
+  color: var(--ink); font-size: clamp(20px, 1.8vw, 28px);
+  font-weight: 680; letter-spacing: -.5px; line-height: 1.2; white-space: nowrap;
+}
+.platform-price-quote small {
+  min-height: 18px; margin-top: 7px; color: var(--muted);
+  font-size: 12px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.platform-price-quote.is-empty .platform-price-amount { color: var(--muted); }
+.platform-price-mobile-label { display: none; }
+.platform-prices-state {
+  padding: 62px 24px; text-align: center;
+  color: var(--theme-secondary, #64748b); font-size: 13px;
+}
+.platform-prices-state button {
+  margin-left: 12px; border: 0; padding: 4px 6px;
+  background: transparent; color: var(--blue);
+}
+.platform-prices button:focus-visible,
+.platform-prices input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .platform-prices-toolbar { flex-wrap: wrap; padding: 14px; }
+  .platform-prices-toolbar time { width: 100%; }
+  .platform-price-matrix { padding: 14px; overflow-x: visible; }
+  .platform-price-matrix-head { display: none; }
+  .platform-price-row, .platform-price-matrix.is-team .platform-price-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0;
+  }
+  .platform-price-plan { grid-column: 1 / -1; padding: 17px 16px; }
+  .platform-price-quote {
+    min-height: 90px; padding: 14px 16px; border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+  .platform-price-quote:nth-child(2n + 1) { border-left: 1px solid var(--line); }
+  .platform-price-quote:last-child:nth-child(even) { grid-column: 1 / -1; }
+  .platform-price-mobile-label {
+    display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; line-height: 1.4;
+  }
+  .platform-price-amount { font-size: clamp(18px, 5vw, 25px); }
+}

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "即梦积分管家 · 管理员观察版",
+  "description": "管理员本机查看即梦采集状态，并按需同步平台套餐标价；账号、钱包和流水不上报。",
+  "version": "0.1.1",
+  "minimum_chrome_version": "120",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "icons": {"16": "icons/yiqian-16.png", "32": "icons/yiqian-32.png", "48": "icons/yiqian-48.png", "128": "icons/yiqian-128.png"},
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "即梦 · 本机检查",
+    "default_icon": {"16": "icons/yiqian-16.png", "32": "icons/yiqian-32.png", "48": "icons/yiqian-48.png", "128": "icons/yiqian-128.png"}
+  }
+}

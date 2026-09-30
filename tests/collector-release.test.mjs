@@ -29,6 +29,17 @@ test('release status uses reported versions, numeric comparisons, delayed-log or
   const current=devices[2];
   await call('/api/collector/diagnostics','POST',{logs:[{id:'late-old-version',at:new Date(now-60_000).toISOString(),code:'collector_started',extensionVersion:'0.1.0'}]},current.headers);
   const status=await (await call('/api/collector/status','GET',undefined,current.headers)).json();assert.equal(status.extensionVersion,'0.2.10');assert.equal(status.updateAvailable,false);assert.equal(status.extensionVersionObservedAt,new Date(now-1000).toISOString());
+  const otherEmployee=await (await call('/api/employees','POST',{name:'另一员工',departmentId:department.id},admin)).json();
+  const otherDevice=await (await call('/api/installations','POST',{employeeId:otherEmployee.id,role:'collector'},admin)).json();
+  const provisionFrom=async response=>JSON.parse(strFromU8(unzipSync(new Uint8Array(await response.arrayBuffer()))['provision.json']));
+  const ownBefore=await provisionFrom(await call(`/api/installations/${current.id}/extension.zip`,'GET',undefined,admin));
+  const otherProvision=await provisionFrom(await call(`/api/installations/${otherDevice.id}/extension.zip`,'GET',undefined,admin));
+  assert.notEqual(ownBefore.token,otherProvision.token);
+  const reassignment=await call(`/api/installations/${current.id}`,'PATCH',{employeeId:otherEmployee.id},admin);
+  assert.equal(reassignment.status,409);assert.match((await reassignment.json()).error,/停用旧采集端并为新员工新建采集端/);
+  assert.deepEqual(await provisionFrom(await call(`/api/installations/${current.id}/extension.zip`,'GET',undefined,admin)),ownBefore);
+  assert.deepEqual(await provisionFrom(await call(`/api/collector/extension.zip?installationId=${otherDevice.id}`,'GET',undefined,current.headers)),ownBefore);
+  assert.equal(ownBefore.installationId,current.id);assert.equal(ownBefore.employeeName,employee.name);
   publish('0.3.1');
   dashboard=await (await call('/api/dashboard','GET',undefined,admin)).json();assert.equal(dashboard.collectorRelease.version,'0.3.1');assert.equal(dashboard.installations.find(row=>row.id===current.id).updateAvailable,true,'backend package changes are visible without inventing a device update');
   assert.equal((await call('/api/dashboard')).status,401);assert.equal((await call('/api/dashboard','GET',undefined,current.headers)).status,403);assert.equal((await call('/api/collector/status')).status,401);

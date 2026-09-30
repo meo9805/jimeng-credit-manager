@@ -85,6 +85,38 @@ test('one browser tab uploads each discovered wallet and preserves independent c
   let options;h.read=async args=>{options=args.args[0];return raw();};await h.worker.collect();
   assert.equal(options.collectAllSpaces,true);assert.equal(options.previousCollections['u1:team:t1:team_total'].eventId,'t-head');
 }));
+test('large financial source facts split into accepted uploads below the server body limit',()=>harness(async h=>{
+  const at=new Date().toISOString();
+  const payload={details:Object.fromEntries(Array.from({length:38},(_,index)=>[`amount${index}`,'积'.repeat(1000)]))};
+  h.read=async()=>raw({creditSourceFacts:['user_credit','user_info','user_credit_history','user_credit'].map(source=>({source,loginUserId:'u1',teamId:null,
+      queryScope:'personal',readAt:at,payload}))});
+  await h.worker.collect();
+  assert.ok(h.ingested.length>1);
+  assert.ok(h.requests.filter(item=>item.url.endsWith('/api/ingest')).every(item=>
+    new TextEncoder().encode(item.options.body).length < 512*1024));
+  assert.equal(h.ingested.flatMap(item=>item.creditSourceFacts || []).length,4);
+  assert.equal(h.storage.pending.length,0);
+}));
+test('switch recovery keeps collector binding, earlier account cursors and already captured operation evidence',()=>harness(async h=>{
+  h.read=async()=>raw({collectionKey:'u1:personal:personal',headEventId:'old-head',nextCursor:'old-next'});
+  await h.worker.collect();
+  const binding=structuredClone(h.storage.serviceBinding);
+  h.online=false;
+  const evidence={submitId:'before-switch',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()};
+  const saved=await new Promise(resolve=>h.events.message({type:'operation-evidence',operationEvidence:evidence},{id:'test',url:'https://jimeng.jianying.com/ai-tool/home',tab:{id:1}},resolve));
+  assert.equal(saved.ok,true);await h.worker.collect();
+  h.read=async()=>({status:'ok',diagnosticCodes:['account_read_recovered'],observations:[raw({userId:'u2',collectionKey:'u2:personal:personal',headEventId:'new-head'})]});
+  await h.worker.collect();
+  assert.deepEqual(h.storage.serviceBinding,binding);
+  assert.equal(h.storage.scanKeys[1].collections['u1:personal:personal'].cursor,'old-next');
+  assert.equal(h.storage.scanKeys[1].collections['u2:personal:personal'].eventId,'new-head');
+  assert.equal(h.storage.pendingOperationEvidence[0].submitId,'before-switch');
+  h.online=true;await h.worker.collect();
+  assert.equal(h.storage.pendingOperationEvidence.length,0);
+  assert.ok(h.ingested.some(item=>item.operationEvidence?.some(entry=>entry.submitId==='before-switch')));
+  assert.ok(h.ingested.some(item=>item.loginIdentity?.platformUserId==='u2'));
+  assert.ok(h.storage.diagnostics.entries.some(item=>item.code==='account_read_recovered'));
+}));
 test('accepted local operation evidence survives offline, strips extra data, and drains without an open tab',()=>harness(async h=>{
   h.online=false;h.tabs=[];
   const operationEvidence={submitId:'submit-1',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString(),prompt:'must never be uploaded',operatorName:'untrusted'};
@@ -139,6 +171,89 @@ test('an unacknowledged operation upload retains its evidence until the server a
   h.transport=null;await h.worker.collect();assert.deepEqual(h.storage.pendingOperationEvidence,[]);
   assert.equal(h.ingested[0].operationEvidence[0].submitId,'ack-retry');
 }));
+test('one permanently rejected operation is retained locally while later valid evidence uploads',()=>harness(async h=>{
+  h.tabs=[];
+  const evidence=submitId=>({submitId,userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()});
+  const bad=evidence('bad-operation'),good=evidence('good-operation');
+  h.storage.pendingOperationEvidence=[bad,good];
+  const batches=[];
+  h.transport=async(url,options)=>{
+    if(!url.endsWith('/api/ingest'))return null;
+    const batch=JSON.parse(options.body).operationEvidence;
+    batches.push(batch.map(item=>item.submitId));
+    return batch.some(item=>item.submitId==='bad-operation') ? Response.json({error:'rejected'},{status:400}) : Response.json({accepted:true});
+  };
+  await h.worker.collect();
+  assert.deepEqual(batches,[['bad-operation','good-operation'],['bad-operation'],['good-operation']]);
+  assert.deepEqual(h.storage.pendingOperationEvidence,[]);
+  assert.equal(h.storage.rejectedOperationEvidence.length,1);
+  assert.deepEqual(h.storage.rejectedOperationEvidence[0].evidence,bad);
+  assert.equal(h.storage.rejectedOperationEvidence[0].status,400);
+  assert.ok(h.storage.diagnostics.entries.some(item=>item.code==='operation_rejected'&&item.httpStatus===400));
+}));
+test('temporary rejection preserves the complete operation batch for an identical retry',()=>harness(async h=>{
+  h.tabs=[];
+  const evidence=[{submitId:'retry-1',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()},
+    {submitId:'retry-2',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()}];
+  h.storage.pendingOperationEvidence=structuredClone(evidence);
+  const batches=[];
+  let attempt=0;
+  h.transport=async(url,options)=>{
+    if(!url.endsWith('/api/ingest'))return null;
+    batches.push(JSON.parse(options.body).operationEvidence);
+    return ++attempt===1 ? Response.json({error:'busy'},{status:429}) : Response.json({accepted:true});
+  };
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pendingOperationEvidence,evidence);
+  assert.equal(h.storage.rejectedOperationEvidence,undefined);
+  await h.worker.collect();
+  assert.deepEqual(batches,[evidence,evidence]);
+  assert.deepEqual(h.storage.pendingOperationEvidence,[]);
+}));
+test('authorization failures leave operation evidence queued and never quarantine it',()=>harness(async h=>{
+  h.tabs=[];
+  const evidence={submitId:'auth-retry',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()};
+  h.storage.pendingOperationEvidence=[evidence];
+  h.ingestStatus=401;
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pendingOperationEvidence,[evidence]);
+  assert.equal(h.storage.rejectedOperationEvidence,undefined);
+  assert.equal(h.storage.state.status,'error');
+  h.ingestStatus=200;
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pendingOperationEvidence,[]);
+}));
+test('a full rejected-operation archive keeps the old records and does not discard the new one',()=>harness(async h=>{
+  h.tabs=[];
+  const evidence={submitId:'new-rejected',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()};
+  h.storage.pendingOperationEvidence=[evidence];
+  h.storage.rejectedOperationEvidence=Array.from({length:500},(_,index)=>({at:evidence.occurredAt,status:400,
+    evidence:{...evidence,submitId:`old-${index}`}}));
+  h.ingestStatus=400;
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pendingOperationEvidence,[evidence]);
+  assert.equal(h.storage.rejectedOperationEvidence.length,500);
+  assert.match(h.storage.state.warning,/500 条/);
+}));
+test('a lost receipt replays the same operation identifiers without creating a second logical record',()=>harness(async h=>{
+  h.tabs=[];
+  const evidence={submitId:'accepted-before-timeout',userId:'u1',spaceType:'personal',spaceId:'personal',occurredAt:new Date().toISOString()};
+  h.storage.pendingOperationEvidence=[evidence];
+  const accepted=new Set(), batches=[];
+  h.transport=async(url,options)=>{
+    if(!url.endsWith('/api/ingest'))return null;
+    const batch=JSON.parse(options.body).operationEvidence;
+    batches.push(batch.map(item=>item.submitId));
+    for(const item of batch)accepted.add([item.submitId,item.userId,item.spaceType,item.spaceId].join('|'));
+    return batches.length===1 ? Response.json({error:'receipt lost'},{status:503}) : Response.json({accepted:true});
+  };
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pendingOperationEvidence,[evidence]);
+  await h.worker.collect();
+  assert.deepEqual(batches,[['accepted-before-timeout'],['accepted-before-timeout']]);
+  assert.equal(accepted.size,1);
+  assert.deepEqual(h.storage.pendingOperationEvidence,[]);
+}));
 test('local submit events cross bridge, durable worker queue and authenticated HTTP to identify two employees borrowing one account',()=>harness(async h=>{
   const dataDir=mkdtempSync(path.join(os.tmpdir(),'jmc-full-operation-chain-'));
   const app=createApp({dataDir}),origin=await app.start(0);
@@ -156,19 +271,24 @@ test('local submit events cross bridge, durable worker queue and authenticated H
     };
     const transaction=(submitId,eventId=submitId)=>({platformUserId:'shared-account',spaceId:'personal',scope:'personal',eventId,platformSubmitId:submitId,occurredAt:new Date().toISOString(),kind:'consume',amount:-100});
     await post(ownerDevice,{loginIdentity:{platformUserId:'shared-account',displayName:'平台昵称'},transactions:[transaction('before-collector')]});
+    store.patchIdentity('shared-account',{employeeId:owner.id});
     // The real fetch, content bridge and service worker code are used; no paid task is generated.
-    const submit=submitId=>{
+    const submit=(submitId,{switchFrom=null,creditReady=true}={})=>{
       const listeners=new Map(),created=new Set(),accepted=new Set();
+      const user={hasLogin:true,userId:switchFrom||'shared-account'};
+      const snapshot={account:{accountType:'personal',accountKey:'personal'},version:1};
       const page={location:{origin:'https://jimeng.jianying.com'},addEventListener(type,fn){listeners.set(type,fn);},
+        localStorage:{getItem(key){assert.equal(key,'dreamina_current_team_id');return null;}},
         postMessage(data,origin){listeners.get('message')?.({source:page,origin,data});},setInterval(){return 1;},clearInterval(){},
         __debugger:{ContentGeneratorTaskFeatureService:{onAigcDataTaskCreated(fn){created.add(fn);return{dispose(){}};},onAigcDataTaskSubmitSuccess(fn){accepted.add(fn);return{dispose(){}};}},
-          DreaminaCommercialFeatureService:{commercialCreditService:{isLocalCreditReady:true,getCurrentAccountSnapshot(){return{account:{accountType:'personal',accountKey:'personal'},version:1};}},_commerceAccountPort:{getSnapshot(){return{hasLogin:true,userId:'shared-account'};},subscribe(){return{dispose(){}};}}}}};
+          DreaminaCommercialFeatureService:{commercialCreditService:{isLocalCreditReady:creditReady,getCurrentAccountSnapshot(){return snapshot;}},_commerceAccountPort:{getSnapshot(){return user;},subscribe(){return{dispose(){}};}}}}};
       const chrome={runtime:{sendMessage(message){
         if(message.type!=='operation-evidence')return Promise.resolve({ok:true});
         return new Promise(resolve=>h.events.message(message,{id:'test',url:'https://jimeng.jianying.com/ai-tool/home',tab:{id:1}},resolve));
       }}};
       vm.runInNewContext(readFileSync(new URL('../extension/content-bridge.js',import.meta.url),'utf8'),{window:page,location:page.location,chrome,setInterval(){return 1;}});
       vm.runInNewContext(`(${installOperationWatcher.toString()})()`,{window:page});
+      if(switchFrom){user.userId='shared-account';snapshot.version++;}
       const model={idModel:{submitId},prompt:'private prompt must stay in the page'};
       for(const callback of created)callback(model);
       for(const callback of accepted)callback(model);
@@ -177,7 +297,7 @@ test('local submit events cross bridge, durable worker queue and authenticated H
       h.provision={endpoint:origin,installationId:device.id,token:store.installationToken(device.id)};
       await h.reload();
       h.transport=async(url,options)=>{if(url.endsWith('/api/ingest'))throw new Error('offline before receipt');};
-      submit(submitId);
+      submit(submitId,device.id===borrowerDevice.id?{switchFrom:'borrower-own-account',creditReady:false}:{});
       await until(()=>h.storage.pendingOperationEvidence?.some(item=>item.submitId===submitId));
       await h.worker.collect();
       // Another reader can upload the charge; that reader is not necessarily its operator.
@@ -199,7 +319,7 @@ test('local submit events cross bridge, durable worker queue and authenticated H
   } finally {store.close();await app.close();rmSync(dataDir,{recursive:true,force:true});}
 }));
 test('rate-limited uploads retain their queue and retry without changing routes or quarantining valid observations',()=>harness(async h=>{
-  h.provision.internalEndpoint='http://example.test:18418';
+  h.provision.internalEndpoint='http://192.0.2.10:18418';
   h.ingestStatus=429;await h.worker.collect();
   const first=structuredClone(h.storage.pending[0]);
   await h.worker.collect();
@@ -246,6 +366,64 @@ test('quarantined observations do not complete a command',()=>harness(async h=>{
   h.ingestStatus=400;h.commands=[command('invalid')];await h.worker.pollCommands({force:true});await until(()=>h.results.length);
   assert.equal(h.results[0].status,'failed');assert.equal(h.storage.pending.length,0);assert.equal(h.storage.rejected.length,1);
 }));
+test('more than ten permanently rejected observations remain intact and can retry without extra upload fields',()=>harness(async h=>{
+  h.ingestStatus=400;
+  h.read=async(_,index)=>raw({collectionKey:'u1:personal:personal',headEventId:`head-${index}`,displayName:`snapshot-${index}`});
+  for(let index=0;index<12;index++)await h.worker.collect();
+  assert.equal(h.storage.rejected.length,12);
+  assert.deepEqual(h.storage.rejected.map(item=>item.entry.accounts[0].displayName),Array.from({length:12},(_,index)=>`snapshot-${index+1}`));
+  assert.equal(h.storage.scanKeys[1].collections['u1:personal:personal'].eventId,'head-12');
+  const archived=structuredClone(h.storage.rejected[0].entry);
+  h.storage.rejected[0].retryAt=new Date(Date.now()-1000).toISOString();
+  h.ingestStatus=200;h.tabs=[];
+  await h.worker.collect();
+  assert.equal(h.storage.rejected.length,11);
+  assert.deepEqual(h.ingested[0],JSON.parse(JSON.stringify(archived)));
+  assert.equal(Object.hasOwn(h.ingested[0],'queueId'),false);
+  assert.equal(Object.hasOwn(h.ingested[0],'retryAt'),false);
+}));
+test('a rate-limited rejected-observation retry keeps the original snapshot for later delivery',()=>harness(async h=>{
+  const entry={observedAt:new Date().toISOString(),status:'ok',accounts:[],transactions:[]};
+  h.storage.serviceBinding={endpoint:h.provision.endpoint,installationId:h.provision.installationId};
+  h.storage.rejected=[{queueId:'retry-later',at:new Date().toISOString(),status:400,
+    retryAt:new Date(Date.now()-1000).toISOString(),entry}];
+  h.ingestStatus=429;h.tabs=[];
+  await h.worker.collect();
+  assert.deepEqual(h.storage.rejected[0].entry,entry);
+  assert.ok(Date.parse(h.storage.rejected[0].retryAt)>Date.now());
+  assert.equal(h.ingested.length,0);
+  h.ingestStatus=200;h.storage.rejected[0].retryAt=new Date(Date.now()-1000).toISOString();
+  await h.worker.collect();
+  assert.deepEqual(h.storage.rejected,[]);
+  assert.deepEqual(h.ingested,[entry]);
+}));
+test('a full rejected-observation archive leaves the original pending item and cursor untouched',()=>harness(async h=>{
+  const item={queueId:'not-archived',observation:{observedAt:new Date().toISOString(),status:'ok',accounts:[],transactions:[]}};
+  h.storage.serviceBinding={endpoint:h.provision.endpoint,installationId:h.provision.installationId};
+  h.storage.pending=[item];h.storage.scanKeys={1:{collections:{'u1:personal:personal':{eventId:'before'}}}};
+  h.storage.rejected=Array.from({length:30},(_,index)=>({queueId:`old-${index}`,at:new Date().toISOString(),status:400,
+    retryAt:new Date(Date.now()+3600000).toISOString(),entry:item.observation}));
+  h.ingestStatus=400;
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pending,[item]);
+  assert.equal(h.storage.rejected.length,30);
+  assert.equal(h.storage.scanKeys[1].collections['u1:personal:personal'].eventId,'before');
+  assert.equal(h.reads,0);
+  assert.match(h.storage.state.warning,/本机/);
+}));
+test('a rejected-observation archive write failure preserves pending data and stops cursor advancement',()=>harness(async h=>{
+  const item={queueId:'write-failed',observation:{observedAt:new Date().toISOString(),status:'ok',accounts:[],transactions:[]}};
+  h.storage.serviceBinding={endpoint:h.provision.endpoint,installationId:h.provision.installationId};
+  h.storage.pending=[item];h.storage.scanKeys={1:{collections:{'u1:personal:personal':{eventId:'before'}}}};
+  h.ingestStatus=400;
+  const storage=globalThis.chrome.storage.local,save=storage.set;
+  storage.set=async value=>{if(value.rejected)throw new Error('storage failure');return save(value);};
+  await h.worker.collect();
+  assert.deepEqual(h.storage.pending,[item]);
+  assert.equal(h.storage.rejected,undefined);
+  assert.equal(h.storage.scanKeys[1].collections['u1:personal:personal'].eventId,'before');
+  assert.equal(h.reads,0);
+}));
 test('lost result delivery persists and retries without another read or command loss',()=>harness(async h=>{
   h.receiptOnline=false;h.commands=[command('retry-result')];await h.worker.pollCommands({force:true});
   await until(()=>h.timeline.includes('receipt'));
@@ -273,7 +451,7 @@ test('a capped manual scan reports unread tabs as partial',()=>harness(async h=>
   assert.equal(h.results[0].status,'partial');assert.match(h.results[0].message,/2 个即梦页面本轮未读取/);
 }));
 test('collector requests omit cookies and redirects even with legacy administrator configuration',()=>harness(async h=>{
-  h.provision.endpoint='https://collector.example.test';h.provision.dashboardEndpoint='http://example.test:18419';
+  h.provision.endpoint='https://collector.example.test';h.provision.dashboardEndpoint='http://192.0.2.10:18419';
   h.provision.role='admin';
   await h.worker.collect();
   assert.ok(h.requests.some(r=>r.url===h.provision.endpoint+'/api/ingest'));
@@ -282,7 +460,7 @@ test('collector requests omit cookies and redirects even with legacy administrat
   for(const request of h.requests){assert.equal(request.options.credentials,'omit');assert.equal(request.options.redirect,'error');assert.equal(request.options.headers.Authorization,'Bearer '+h.provision.token);}
 }));
 test('legacy administrator packages still collect through internal HTTP without a management capability',()=>harness(async h=>{
-  h.provision.endpoint='http://example.test:18418';
+  h.provision.endpoint='http://192.0.2.10:18418';
   h.provision.role='admin';h.provision.dashboardEndpoint='obsolete unused management configuration';
   await h.worker.collect();
   assert.equal(h.ingested.length,1);assert.equal(h.opened.length,0);
@@ -325,7 +503,7 @@ test('server migration isolates old command receipts, resets watermarks and drai
   h.storage.scanKeys={1:{account:'u1:personal',eventId:'old-head'}};
   h.storage.commandResults={'old-server-command':{result:{status:'completed'},expiresAt:command('old').expiresAt}};
   h.storage.pending=[{queueId:'saved-observation',observation:pending}];
-  h.provision.endpoint='http://example.test:18418';
+  h.provision.endpoint='http://192.0.2.10:18418';
   let seenArguments;h.read=async args=>{seenArguments=args.args[0];return raw();};
   await h.worker.collect();
   assert.equal(seenArguments.previousEventId,null);assert.equal(seenArguments.previousAccount,null);
@@ -349,15 +527,20 @@ test('a new installation ID isolates the previous queue even when employees shar
   h.storage.serviceBinding={endpoint:h.provision.endpoint,installationId:'old-device',employeeName:h.provision.employeeName};
   const pending=[{queueId:'previous-owner',observation:{status:'error',accounts:[],transactions:[]}}];
   h.storage.pending=pending;
+  const rejected=[{queueId:'previous-rejected',at:new Date().toISOString(),status:400,retryAt:new Date(Date.now()-1000).toISOString(),
+    entry:{observedAt:new Date().toISOString(),status:'ok',accounts:[],transactions:[]}}];
+  h.storage.rejected=rejected;
   await h.worker.collect();
   assert.equal(h.storage.isolatedPending.length,1);assert.deepEqual(h.storage.isolatedPending[0].pending,pending);
+  assert.equal(h.storage.isolatedRejected.length,1);assert.deepEqual(h.storage.isolatedRejected[0].rejected,rejected);
+  assert.deepEqual(h.storage.rejected,[]);
   assert.equal(h.ingested.length,1);assert.equal(h.storage.pending.length,0);
 }));
 test('unchanged collector binding retains scan watermarks and pending receipts across worker restart',()=>harness(async h=>{
   await h.worker.collect();
   h.storage.scanKeys={1:{account:'u1:personal',eventId:'kept-head'}};
   h.storage.commandResults={'existing-command':{result:{status:'completed'},expiresAt:command('existing-command').expiresAt}};
-  h.provision.dashboardEndpoint='http://example.test:18419';h.provision.internalEndpoint='http://example.test:18418';await h.reload();
+  h.provision.dashboardEndpoint='http://192.0.2.10:18419';h.provision.internalEndpoint='http://192.0.2.10:18418';await h.reload();
   h.read=async args=>{assert.equal(args.args[0].previousEventId,'kept-head');return raw();};
   await h.worker.collect();
   assert.equal(h.results[0].status,'completed');assert.equal(h.storage.archivedCommandResults,undefined);
@@ -370,7 +553,7 @@ for(const status of [404,409])test(`a terminal ${status} receipt does not preven
   assert.equal(h.requests.filter(r=>r.url.endsWith('/api/collector/commands')).length,before+1);
 }));
 test('a failed public route falls back to the packaged internal route and retries public after 60 seconds',()=>harness(async h=>{
-  h.provision.endpoint='http://198.51.100.5:18418';h.provision.internalEndpoint='http://example.test:18418';
+  h.provision.endpoint='http://198.51.100.5:18418';h.provision.internalEndpoint='http://192.0.2.10:18418';
   let publicOffline=true;
   h.transport=async url=>{if(publicOffline && url.startsWith(h.provision.endpoint))throw new TypeError('network failed');};
   assert.equal((await h.message('status')).ok,true);
@@ -384,14 +567,14 @@ test('a failed public route falls back to the packaged internal route and retrie
   assert.equal(new URL(h.requests.at(-1).url).origin,h.provision.endpoint);
 }));
 test('cached internal route failure can return to the public route',()=>harness(async h=>{
-  h.provision.internalEndpoint='http://example.test:18418';
+  h.provision.internalEndpoint='http://192.0.2.10:18418';
   let failed=h.provision.endpoint;h.transport=async url=>{if(url.startsWith(failed))throw new TypeError('network failed');};
   assert.equal((await h.message('status')).ok,true);
   failed=h.provision.internalEndpoint;assert.equal((await h.message('status')).ok,true);
   assert.deepEqual(h.requests.slice(-2).map(r=>new URL(r.url).origin),[h.provision.internalEndpoint,h.provision.endpoint]);
 }));
 test('collector command, fresh ingest and receipt use the fallback while preserving acknowledgement order',()=>harness(async h=>{
-  h.provision.internalEndpoint='http://example.test:18418';
+  h.provision.internalEndpoint='http://192.0.2.10:18418';
   h.transport=async url=>{if(url.startsWith(h.provision.endpoint))throw new DOMException('Timed out','TimeoutError');};
   h.commands=[command('fallback-command')];await h.worker.pollCommands({force:true});await until(()=>h.results.length);
   assert.equal(h.results[0].status,'completed');assert.deepEqual(h.timeline,['read-1','ingest','receipt']);
@@ -405,7 +588,7 @@ test('collector command, fresh ingest and receipt use the fallback while preserv
   assert.equal(h.storage.pending.length,0);
 }));
 for(const status of [502,503,504])test(`gateway ${status} retries the same collector request internally`,()=>harness(async h=>{
-  h.provision.internalEndpoint='http://example.test:18418';
+  h.provision.internalEndpoint='http://192.0.2.10:18418';
   h.transport=async url=>{if(url.startsWith(h.provision.endpoint))return Response.json({error:'gateway'},{status});};
   await h.worker.collect();
   const uploads=h.requests.filter(r=>r.url.endsWith('/api/ingest'));
@@ -414,14 +597,14 @@ for(const status of [502,503,504])test(`gateway ${status} retries the same colle
 }));
 test('authorization and other API errors never trigger another route',async()=>{
   for(const status of [400,401,403,409,429,500])await harness(async h=>{
-    h.provision.internalEndpoint='http://example.test:18418';
+    h.provision.internalEndpoint='http://192.0.2.10:18418';
     h.transport=async()=>Response.json({error:'semantic failure'},{status});
     assert.equal((await h.message('status')).ok,false);
     assert.equal(h.requests.length,1);assert.equal(new URL(h.requests[0].url).origin,h.provision.endpoint);
   });
 });
 test('an invalid configured backup is rejected before any bearer request',()=>harness(async h=>{
-  h.provision.internalEndpoint='http://example.test:18418/other-path';
+  h.provision.internalEndpoint='http://192.0.2.10:18418/other-path';
   assert.equal((await h.message('status')).ok,false);assert.equal(h.requests.length,0);
 }));
 test('diagnostic uploads cannot block fresh collection and do not log their own failures',()=>harness(async h=>{
@@ -443,6 +626,18 @@ test('partial reads include tab counts while diagnostics exclude raw errors and 
   assert.equal(partial.readTabs,1);assert.equal(partial.skippedTabs,1);assert.equal(partial.extensionVersion,'0.2.2');
   assert.equal(JSON.stringify(logs).includes('private-error-fixture'),false);assert.equal(h.badges.includes('!'),false);
   assert.ok(h.diagnosticRequests.every(r=>JSON.parse(r.options.body).logs.length<=50));
+}));
+test('page failure diagnostics preserve safe reason codes without raw messages or duplicate per-space entries',()=>harness(async h=>{
+  h.read=async()=>({status:'ok',partial:true,diagnosticCodes:['team_discovery_partial','untrusted-url'],observations:[
+    raw({status:'error',message:'private-error-fixture',diagnosticCodes:['credit_balance_unavailable']}),
+    raw({status:'error',diagnosticCodes:['credit_balance_unavailable']}),
+  ]});
+  await h.worker.collect();await h.worker.flushDiagnostics();
+  const logs=h.storage.diagnostics.entries;
+  assert.equal(logs.filter(item=>item.code==='credit_balance_unavailable').length,1);
+  assert.equal(logs.filter(item=>item.code==='team_discovery_partial').length,1);
+  assert.equal(JSON.stringify(logs).includes('private-error-fixture'),false);
+  assert.equal(JSON.stringify(logs).includes('untrusted-url'),false);
 }));
 test('local popup and diagnostics remain available with invalid configuration and expose no endpoint',()=>harness(async h=>{
   h.provision.endpoint='invalid fixture';

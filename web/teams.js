@@ -1,3 +1,5 @@
+import { archivedTeamIds, teamManagementById } from './team-management.js';
+
 const knownNumber = (value) => typeof value === 'number' && Number.isFinite(value) ? value : null;
 
 const timestamp = (value) => value && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
@@ -26,7 +28,7 @@ export function teamCreator(team) {
 
 /** The platform creator and an internal cost owner are different facts. */
 export function teamRelationship(team, platformUserId) {
-  if (!team || !platformUserId) return { role: 'unknown', label: '团队关系待确认' };
+  if (!team || !platformUserId) return { role: 'unknown', label: '团队关系未获取' };
   const id = String(platformUserId);
   const creator = teamCreator(team);
   if (creator.platformUserId === id) return { role: 'creator', label: '创建的团队' };
@@ -38,7 +40,7 @@ export function teamRelationship(team, platformUserId) {
   if (member && creator.platformUserId && creator.platformUserId !== id && member.role !== 'creator') {
     return { role: 'unknown', label: '加入的团队' };
   }
-  return { role: 'unknown', label: '团队关系待确认' };
+  return { role: 'unknown', label: '团队关系未获取' };
 }
 
 /** Associate teams only with login identities already established by account data. */
@@ -59,8 +61,10 @@ export function linkedTeamsForLogin(group, teams = []) {
 }
 
 /** Link a team to its existing wallet without adding member identities to logins. */
-export function teamViewModels(teams = [], accounts = []) {
+export function teamViewModels(teams = [], accounts = [], teamManagement = []) {
   const pools = accounts.filter((account) => account.scope === 'team_total' && account.spaceId);
+  const archived = archivedTeamIds(teams, teamManagement);
+  const policies = teamManagementById(teamManagement);
   const bySpace = new Map();
   for (const pool of pools) bySpace.set(String(pool.spaceId), { spaceId: String(pool.spaceId) });
   for (const team of teams) if (team?.spaceId) bySpace.set(String(team.spaceId), team);
@@ -73,6 +77,8 @@ export function teamViewModels(teams = [], accounts = []) {
     const result = {
       ...team,
       spaceId: String(team.spaceId),
+      archived: archived.has(String(team.spaceId)),
+      archivedAt: policies.get(String(team.spaceId))?.archivedAt ?? team.archivedAt ?? null,
       name: team.name || pool?.spaceName || pool?.displayName || '团队名称未获取',
       membershipPlan: team.membershipPlan || pool?.membershipPlan || null,
       membershipExpiresAt: team.membershipExpiresAt || pool?.membershipExpiresAt || null,

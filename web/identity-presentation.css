@@ -9,3 +9,5 @@
 }
 .identity-sources { display: flex; flex-wrap: wrap; gap: 5px; max-width: 240px; }
 .identity-sources > span { padding: 3px 7px; border-radius: 5px; background: #f2f5fa; color: #7588a2; font-size: 12px; white-space: nowrap; }
+.identities-table td:first-child { max-width: 320px; }
+.identities-table td:first-child .cell-sub { white-space: normal; overflow-wrap: anywhere; }

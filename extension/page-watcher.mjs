@@ -14,9 +14,11 @@ export function installCreditWatcher() {
   const changed = () => {
     try {
       const user = port?.getSnapshot?.();
-      const current = credit?.getCurrentAccountSnapshot?.()?.account || credit?.currentAccount;
+      const snapshot = credit?.getCurrentAccountSnapshot?.();
+      const current = snapshot?.account || credit?.currentAccount || credit?._currentAccount;
       const next = JSON.stringify([Boolean(user?.hasLogin), String(user?.userId || ''), current?.accountKey || '',
-        current?.accountType || '', String(current?.teamId || ''), finite(credit?.localCredit), finite(credit?.teamTotalCredit)]);
+        current?.accountType || '', String(current?.teamId || ''), snapshot?.version ?? null, Boolean(credit?.isLocalCreditReady),
+        finite(credit?.localCredit), finite(credit?.teamTotalCredit)]);
       if (next === fingerprint) return;
       fingerprint = next;
       if (timer !== null) window.clearTimeout(timer);
@@ -32,7 +34,7 @@ export function installCreditWatcher() {
     const nextPort = feature?._commerceAccountPort;
     if (!nextCredit || !nextPort?.getSnapshot) return;
     if (nextCredit !== credit || nextPort !== port) {
-      cleanup(); credit = nextCredit; port = nextPort;
+      cleanup(); credit = nextCredit; port = nextPort; fingerprint = null;
       try { if (typeof credit.onLocalCreditChange === 'function') disposables.push(credit.onLocalCreditChange(changed)); } catch { /* scalar fallback below */ }
       try { if (typeof port.subscribe === 'function') disposables.push(port.subscribe(changed)); } catch { /* scalar fallback below */ }
     }

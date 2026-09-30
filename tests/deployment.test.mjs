@@ -9,8 +9,8 @@ import {createApp} from '../server/index.mjs';
 
 test('public collector cannot expose administration and packages separate the two destinations',async t=>{
   const dataDir=mkdtempSync(path.join(os.tmpdir(),'jmc-deploy-'));
-  const managementOrigin='http://example.test:18419',publicOrigin='http://public.example.test:18418';
-  const app=createApp({dataDir,managementOrigin,publicOrigin,collectorInternalOrigin:'http://example.test:18418'});
+  const managementOrigin='http://192.0.2.10:18419',publicOrigin='http://198.51.100.10:18418';
+  const app=createApp({dataDir,managementOrigin,publicOrigin,collectorInternalOrigin:'http://192.0.2.10:18418'});
   const origin=await app.start(0);
   t.after(async()=>{await app.close();rmSync(dataDir,{recursive:true,force:true})});
   const request=(route,{via=managementOrigin,method='GET',body,cookie,token,headers={}}={})=>new Promise((resolve,reject)=>{
@@ -18,13 +18,23 @@ test('public collector cannot expose administration and packages separate the tw
       const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:res.statusCode,headers:Object.fromEntries(Object.entries(res.headers).map(([key,value])=>[key,Array.isArray(value)?value.join(', '):value]))})));
     });req.on('error',reject);req.end(body?JSON.stringify(body):undefined);
   });
-  for(const via of [publicOrigin,'http://example.test:18418']){
+  for(const via of [publicOrigin,'http://192.0.2.10:18418']){
     assert.equal((await request('/api/health',{via})).status,200);
-    for(const route of ['/','/api/dashboard','/api/session','/api/departments','/api/employees','/api/admin/login','/api/admin/extension-login','/preview-data.json'])assert.equal((await request(route,{via})).status,404);
+    for(const route of ['/','/api/dashboard','/api/session','/api/departments','/api/employees','/api/admin/login','/api/admin/extension-login','/api/admin/observer-extension.zip','/preview-data.json'])assert.equal((await request(route,{via})).status,404);
     assert.equal((await request('/api/collector/status',{via})).status,401);
   }
+  assert.equal((await request('/api/admin/observer-extension.zip')).status,401);
   const login=await request('/api/admin/login',{method:'POST',body:{secret:readFileSync(path.join(dataDir,'admin-secret'),'utf8')}});
   assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
+  const observerResponse=await request('/api/admin/observer-extension.zip',{cookie});
+  assert.equal(observerResponse.status,200);
+  const observerFiles=unzipSync(new Uint8Array(await observerResponse.arrayBuffer()));
+  const observerManifest=JSON.parse(strFromU8(observerFiles['manifest.json']));
+  assert.equal(observerManifest.host_permissions,undefined);
+  assert.deepEqual([...observerManifest.permissions].sort(),['activeTab','scripting','storage']);
+  assert.equal(observerFiles['provision.json'],undefined);
+  assert.equal(observerManifest.content_scripts,undefined);
+  assert.equal(observerManifest.background,undefined);
   const departmentResponse=await request('/api/departments',{method:'POST',cookie,body:{name:'管理'}});
   assert.equal(departmentResponse.status,201);const department=await departmentResponse.json();
   const employeeResponse=await request('/api/employees',{method:'POST',cookie,body:{name:'管理员',departmentId:department.id}});
@@ -36,8 +46,8 @@ test('public collector cannot expose administration and packages separate the tw
   const files=unzipSync(new Uint8Array(await zip.arrayBuffer()));
   const provision=JSON.parse(strFromU8(files['provision.json']));
   assert.equal(provision.endpoint,publicOrigin);assert.equal(provision.dashboardEndpoint,undefined);assert.equal(provision.role,'collector');
-  assert.equal(provision.internalEndpoint,'http://example.test:18418');
-  assert.deepEqual(JSON.parse(strFromU8(files['manifest.json'])).host_permissions,['https://jimeng.jianying.com/*','http://public.example.test/*','http://example.test/*']);
+  assert.equal(provision.internalEndpoint,'http://192.0.2.10:18418');
+  assert.deepEqual(JSON.parse(strFromU8(files['manifest.json'])).host_permissions,['https://jimeng.jianying.com/*','http://198.51.100.10/*','http://192.0.2.10/*']);
   const token=provision.token,extensionOrigin='chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   const status=await request('/api/collector/status',{via:publicOrigin,token,headers:{Origin:extensionOrigin}});
   assert.equal(status.status,200);assert.equal(status.headers.get('access-control-allow-credentials'),null);

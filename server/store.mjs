@@ -6,7 +6,13 @@ import { hash, identity, fail } from './domain.mjs';
 import { createDirectory } from './directory.mjs';
 import { validExtensionVersion } from './collector-release.mjs';
 import { estimateTeamCreditExpiry } from './credit-expiry.mjs';
+import { expirySourceIndex, expiryCreditKind } from './expiry-source.mjs';
 import { createOwnershipHistory } from './ownership-history.mjs';
+import { createAccountUsage } from './account-usage.mjs';
+import { createReferenceRates } from './reference-rates.mjs';
+import { createPlatformPrices } from './platform-prices.mjs';
+import { createEnrollment } from './enrollment.mjs';
+import { createTeamManagement } from './team-management.mjs';
 
 const subscriptionKeys = ['membershipPlan', 'billingCycle', 'membershipExpiresAt', 'nextRenewalAt', 'subscriptionObservedAt'];
 const emptySubscription = { membershipPlan:null, billingCycle:null, membershipExpiresAt:null, nextRenewalAt:null, subscriptionObservedAt:null };
@@ -36,6 +42,25 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
       CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, scope TEXT NOT NULL, space_id TEXT NOT NULL, snapshot_at TEXT NOT NULL, membership_snapshot_at TEXT NOT NULL DEFAULT '', data TEXT NOT NULL, owner_name TEXT, owner_department TEXT);
       CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id), data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS operation_evidence (operation_key TEXT NOT NULL, installation_id TEXT NOT NULL, employee_id TEXT NOT NULL, received_at TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(operation_key,installation_id,employee_id));
+      CREATE TABLE IF NOT EXISTS credit_history_facts (
+        fact_key TEXT NOT NULL, record_hash TEXT NOT NULL, installation_id TEXT NOT NULL,
+        collector_employee_id TEXT NOT NULL, query_scope TEXT NOT NULL, login_user_id TEXT NOT NULL,
+        team_id TEXT, history_id TEXT, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+        read_at TEXT NOT NULL, record TEXT NOT NULL,
+        PRIMARY KEY(fact_key,record_hash,installation_id,collector_employee_id)
+      );
+      CREATE TABLE IF NOT EXISTS subscription_facts (
+        space_type TEXT NOT NULL, login_user_id TEXT NOT NULL, team_id TEXT NOT NULL,
+        record_hash TEXT NOT NULL, installation_id TEXT NOT NULL, collector_employee_id TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, read_at TEXT NOT NULL, record TEXT NOT NULL,
+        PRIMARY KEY(space_type,login_user_id,team_id,record_hash,installation_id,collector_employee_id)
+      );
+      CREATE TABLE IF NOT EXISTS credit_source_facts (
+        source TEXT NOT NULL, query_scope TEXT NOT NULL, login_user_id TEXT NOT NULL, team_id TEXT NOT NULL,
+        payload_hash TEXT NOT NULL, installation_id TEXT NOT NULL, collector_employee_id TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, read_at TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(source,query_scope,login_user_id,team_id,payload_hash,installation_id,collector_employee_id)
+      );
       CREATE TABLE IF NOT EXISTS teams (space_id TEXT PRIMARY KEY, snapshot_at TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS identity_mappings (platform_user_id TEXT PRIMARY KEY, real_name TEXT, department TEXT, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS admin_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -45,6 +70,9 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
       CREATE INDEX IF NOT EXISTS diagnostics_installation_time ON collector_diagnostics(installation_id,observed_at);
       CREATE INDEX IF NOT EXISTS accounts_team ON accounts(space_id,scope);
       CREATE INDEX IF NOT EXISTS transactions_account ON transactions(account_id);
+      CREATE INDEX IF NOT EXISTS credit_history_facts_account ON credit_history_facts(query_scope,login_user_id,team_id,history_id);
+      CREATE INDEX IF NOT EXISTS subscription_facts_account ON subscription_facts(space_type,login_user_id,team_id,read_at DESC);
+      CREATE INDEX IF NOT EXISTS credit_source_facts_account ON credit_source_facts(source,query_scope,login_user_id,team_id,read_at DESC);
       CREATE INDEX IF NOT EXISTS transactions_team_grant ON transactions(account_id,json_extract(data,'$.occurredAt') DESC)
         WHERE json_extract(data,'$.kind')='grant' AND json_extract(data,'$.description')='团队会员积分' AND json_extract(data,'$.amount')>0;
       CREATE INDEX IF NOT EXISTS transactions_operation ON transactions(json_extract(data,'$.platformSubmitId'),json_extract(data,'$.chargedPlatformUserId')) WHERE json_extract(data,'$.kind')='consume';
@@ -55,6 +83,15 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
       CREATE TRIGGER IF NOT EXISTS transactions_revision_update AFTER UPDATE ON transactions
         BEGIN UPDATE data_revisions SET revision=revision+1 WHERE name='transactions'; END;
       CREATE TRIGGER IF NOT EXISTS transactions_revision_delete AFTER DELETE ON transactions
+        BEGIN UPDATE data_revisions SET revision=revision+1 WHERE name='transactions'; END;
+      CREATE TRIGGER IF NOT EXISTS expiry_sources_revision_insert AFTER INSERT ON credit_source_facts
+        WHEN NEW.source='user_credit_history'
+        BEGIN UPDATE data_revisions SET revision=revision+1 WHERE name='transactions'; END;
+      CREATE TRIGGER IF NOT EXISTS expiry_sources_revision_update AFTER UPDATE OF payload ON credit_source_facts
+        WHEN NEW.source='user_credit_history'
+        BEGIN UPDATE data_revisions SET revision=revision+1 WHERE name='transactions'; END;
+      CREATE TRIGGER IF NOT EXISTS expiry_sources_revision_delete AFTER DELETE ON credit_source_facts
+        WHEN OLD.source='user_credit_history'
         BEGIN UPDATE data_revisions SET revision=revision+1 WHERE name='transactions'; END;`);
     if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'membership_snapshot_at')) {
       try { db.exec(`BEGIN IMMEDIATE;
@@ -84,7 +121,60 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
   };
   const now = () => new Date(clock()).toISOString();
   const directory = createDirectory(db,now);
+  const enrollment = createEnrollment(db,{clock,employee:directory.employee,getInstallation,createInstallation,skipInitialBinding});
+  const teamManagement = createTeamManagement(db,now);
   const ownershipHistory = createOwnershipHistory(db,now);
+  const accountUsage = createAccountUsage(db,now);
+  const referenceRates = createReferenceRates(db,now);
+  const platformPrices = createPlatformPrices(db,now);
+  const pricingAccounts = () => db.prepare('SELECT data FROM accounts ORDER BY snapshot_at DESC').all().map(row => JSON.parse(row.data));
+  const subscriptionRowsForAccount = db.prepare(`SELECT read_at,record FROM subscription_facts
+    WHERE space_type=? AND login_user_id=? AND team_id=? ORDER BY read_at DESC,last_seen_at DESC LIMIT 20`);
+  const subscriptionRowsForTeam = db.prepare(`SELECT read_at,record FROM subscription_facts
+    WHERE space_type='team' AND team_id=? ORDER BY read_at DESC,last_seen_at DESC LIMIT 20`);
+  const pricingFacts = account => (account.scope === 'personal'
+    ? subscriptionRowsForAccount.all('personal',account.platformUserId,'')
+    : subscriptionRowsForTeam.all(account.spaceId))
+    .map(row => ({...JSON.parse(row.record),readAt:row.read_at}));
+  const personalGrant = db.prepare(`SELECT json_extract(t.data,'$.amount') amount,json_extract(t.data,'$.occurredAt') occurred_at
+    FROM transactions t WHERE t.account_id=? AND json_extract(t.data,'$.kind')='grant'
+      AND json_extract(t.data,'$.description')='会员积分' AND json_extract(t.data,'$.amount')>0
+    ORDER BY occurred_at DESC LIMIT 1`);
+  const teamPoolGrant = db.prepare(`SELECT json_extract(t.data,'$.amount') amount,json_extract(t.data,'$.occurredAt') occurred_at
+    FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE a.space_id=? AND a.scope='team_total'
+      AND json_extract(t.data,'$.kind')='grant' AND json_extract(t.data,'$.description')='团队会员积分'
+      AND json_extract(t.data,'$.amount')>0 ORDER BY occurred_at DESC LIMIT 1`);
+  const teamMemberGrant = db.prepare(`SELECT json_extract(t.data,'$.amount') amount,json_extract(t.data,'$.occurredAt') occurred_at
+    FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE a.space_id=? AND a.scope='team_member'
+      AND json_extract(t.data,'$.kind')='grant' AND json_extract(t.data,'$.description')='团队会员积分'
+      AND json_extract(t.data,'$.amount')>0 ORDER BY occurred_at DESC LIMIT 1`);
+  const teamSeats = db.prepare("SELECT json_extract(data,'$.totalSeats') seats FROM teams WHERE space_id=?");
+  const pricingMonthlyCredits = account => {
+    const personal = account.scope === 'personal';
+    const pool = personal ? null : teamPoolGrant.get(account.spaceId);
+    const seats = personal ? 1 : teamSeats.get(account.spaceId)?.seats;
+    const grant = personal ? personalGrant.get(account.id) : pool && Number.isSafeInteger(seats) && seats > 0
+      ? pool : teamMemberGrant.get(account.spaceId);
+    if (!grant || !Number.isSafeInteger(grant.amount) || grant.amount <= 0) return null;
+    const observed = Date.parse(account.subscriptionObservedAt ?? account.lastSyncedAt);
+    const granted = Date.parse(grant.occurred_at);
+    if (!Number.isFinite(observed) || !Number.isFinite(granted) || granted > observed + 300_000 || observed - granted > 45 * 86400_000) return null;
+    const perSeat = personal || grant !== pool ? grant.amount : grant.amount / seats;
+    return Number.isSafeInteger(perSeat) && perSeat > 0 ? perSeat : null;
+  };
+  referenceRates.seed(pricingAccounts());
+  referenceRates.refreshFromCatalog(platformPrices.latest(),pricingAccounts(),pricingFacts,pricingMonthlyCredits);
+  const setReferenceRate = input => referenceRates.set(input,pricingAccounts());
+  const setPlatformPrices = input => {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = platformPrices.save(input);
+      const revisedWallets = referenceRates.refreshFromCatalog(result,pricingAccounts(),pricingFacts,pricingMonthlyCredits);
+      db.exec('COMMIT');
+      return {version:result.version,observedAt:result.observedAt,lastObservedAt:result.lastObservedAt,
+        changed:result.changed,revisedWallets,products:result.products.length};
+    } catch(error) {if(db.isTransaction)db.exec('ROLLBACK');throw error;}
+  };
   function mutateOwnership(action,platformUserIds) {
     const nested=db.isTransaction;
     if(!nested)db.exec('BEGIN IMMEDIATE');
@@ -125,7 +215,7 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
     const employee=directory.employee(row.employee_id??null),department=directory.department(row.department_id??null);
     data.employeeId=employee?.id??null;data.departmentId=employee?.departmentId??department?.id??null;
     data.employeeName=employee?.name??data.employeeName??null;data.department=employee?employee.department:department?.name??null;
-    if (data.lastSeenAt && data.status === 'ok' && clock() - Date.parse(data.lastSeenAt) > 24 * 3600_000) data.status = 'offline';
+    if (data.lastSeenAt && clock() - Date.parse(data.lastSeenAt) > 24 * 3600_000) data.status = 'offline';
     data.accountCount = db.prepare('SELECT COUNT(*) AS n FROM installation_accounts WHERE installation_id=?').get(row.id).n;
     data.lastCommandPollAt = data.lastCommandPollAt ?? null;
     data.online = Boolean(data.enabled && data.lastCommandPollAt && clock() - Date.parse(data.lastCommandPollAt) <= COMMAND_ONLINE_MS);
@@ -178,20 +268,15 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
     const employee=directory.employee(input.employeeId);
     if(!employee)fail('请选择员工');
     const id = randomUUID(), token = `jmc_${randomBytes(32).toString('base64url')}`;
-    const data = { id, ...input,employeeName:employee.name,department:employee.department, enabled:true, createdAt:now(), lastSeenAt:null, lastCommandPollAt:null, online:false, status:'waiting', message:null, accountCount:0,initialIdentityBinding:bindingState('pending',employee.id) };
+    const data = { id, ...input,employeeName:employee.name,department:employee.department, enabled:true, createdAt:now(), lastSeenAt:null, lastCommandPollAt:null, online:false, status:'waiting', message:null, accountCount:0,initialIdentityBinding:{...bindingState('skipped',employee.id),resolution:'collection_only'} };
     db.prepare('INSERT INTO installations(id,token_hash,token_cipher,data,employee_id) VALUES(?,?,?,?,?)').run(id,hash(token),encrypt(token),JSON.stringify(data),employee.id);
     return getInstallation(id);
   }
   function patchInstallation(id, input) {
     const current = getInstallation(id);
-    if(Object.hasOwn(input,'employeeId')&&input.employeeId!==current.employeeId&&['bound','conflict','ambiguous','legacy','skipped'].includes(current.initialIdentityBinding?.status))fail('此采集端已完成首次识别，请为其他员工新建采集端',409);
+    if(Object.hasOwn(input,'employeeId')&&input.employeeId!==current.employeeId)fail('采集端创建后不能更换员工；请停用旧采集端并为新员工新建采集端',409);
     const data = { ...current, ...input };
-    if(Object.hasOwn(input,'employeeId')){
-      const employee=directory.employee(input.employeeId);
-      data.employeeName=employee?.name??null;data.department=employee?.department??null;
-      if(data.initialIdentityBinding?.status==='pending')data.initialIdentityBinding={...data.initialIdentityBinding,employeeId:employee?.id??null};
-      db.prepare('UPDATE installations SET data=?,employee_id=?,department_id=NULL WHERE id=?').run(JSON.stringify(data),employee?.id??null,id);
-    } else db.prepare('UPDATE installations SET data=? WHERE id=?').run(JSON.stringify(data),id);
+    db.prepare('UPDATE installations SET data=? WHERE id=?').run(JSON.stringify(data),id);
     return getInstallation(id);
   }
   function skipInitialBinding(id) {
@@ -338,11 +423,55 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
   }
   function ingest(installation, input) {
     requireActiveInstallation(installation.id);
-    let accountCount = 0, transactionCount = 0, teamCount = 0, operationCount = 0;
+    let accountCount = 0, transactionCount = 0, teamCount = 0, operationCount = 0, factCount = 0, subscriptionFactCount = 0, creditSourceFactCount = 0;
     db.exec('BEGIN IMMEDIATE');
     try {
       const touched = new Set(), operations = new Map();
       const addOperation = operation => {if(operation)operations.set(operationKey(operation),operation);};
+      const collector = (input.creditHistoryFacts?.length || input.subscriptionFacts?.length || input.creditSourceFacts?.length) ? getInstallation(installation.id) : null;
+      const receivedAt = now();
+      // Keep platform facts and their collector provenance separate from interpreted ledger rows and actual payments.
+      for (const {context,records} of input.creditHistoryFacts ?? []) {
+        // The same shared-wallet row may be observed through several borrowed
+        // logins. Retain each login's provenance even when the platform event is identical.
+        const accountKey = context.queryScope === 'personal' ? [context.loginUserId]
+          : [context.teamId,context.loginUserId];
+        for (const record of records) {
+          const recordJson = JSON.stringify(record);
+          const factKey = hash(JSON.stringify([context.queryScope,...accountKey,record.historyId ?? `content:${hash(recordJson)}`]));
+          const result = db.prepare(`INSERT INTO credit_history_facts
+            (fact_key,record_hash,installation_id,collector_employee_id,query_scope,login_user_id,team_id,history_id,first_seen_at,last_seen_at,read_at,record)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(fact_key,record_hash,installation_id,collector_employee_id) DO UPDATE SET
+              last_seen_at=excluded.last_seen_at,read_at=excluded.read_at`).run(
+            factKey,hash(recordJson),installation.id,collector.employeeId ?? '',context.queryScope,context.loginUserId,
+            context.teamId,record.historyId,receivedAt,receivedAt,context.readAt,recordJson);
+          factCount += result.changes;
+        }
+      }
+      for (const fact of input.subscriptionFacts ?? []) {
+        const {readAt,...recordData}=fact;
+        const record=JSON.stringify(recordData);
+        db.prepare(`INSERT INTO subscription_facts
+          (space_type,login_user_id,team_id,record_hash,installation_id,collector_employee_id,first_seen_at,last_seen_at,read_at,record)
+          VALUES(?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(space_type,login_user_id,team_id,record_hash,installation_id,collector_employee_id) DO UPDATE SET
+            last_seen_at=excluded.last_seen_at,read_at=excluded.read_at`).run(
+          fact.spaceType,fact.loginUserId,fact.teamId??'',hash(record),installation.id,collector.employeeId??'',
+          receivedAt,receivedAt,readAt,record);
+        subscriptionFactCount++;
+      }
+      for (const fact of input.creditSourceFacts ?? []) {
+        const payload=JSON.stringify(fact.payload);
+        db.prepare(`INSERT INTO credit_source_facts
+          (source,query_scope,login_user_id,team_id,payload_hash,installation_id,collector_employee_id,first_seen_at,last_seen_at,read_at,payload)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(source,query_scope,login_user_id,team_id,payload_hash,installation_id,collector_employee_id) DO UPDATE SET
+            last_seen_at=excluded.last_seen_at,read_at=excluded.read_at`).run(
+          fact.source,fact.queryScope,fact.loginUserId,fact.teamId??'',hash(payload),installation.id,collector.employeeId??'',
+          receivedAt,receivedAt,fact.readAt,payload);
+        creditSourceFactCount++;
+      }
       const evidenceDevice=(input.operationEvidence??[]).length?getInstallation(installation.id):null;
       for(const evidence of input.operationEvidence??[]){
         if(recordOperationEvidence(evidenceDevice,evidence))operationCount++;
@@ -397,14 +526,18 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
       for(const operation of operations.values())reconcileOperation(operation);
       for (const accountId of touched) db.prepare('INSERT OR IGNORE INTO installation_accounts(installation_id,account_id) VALUES(?,?)').run(installation.id,accountId);
       const device = { ...getInstallation(installation.id), lastSeenAt:now(), status:input.status, message:input.message };
-      bindInitialIdentity(device,input);
+      recordLogins(device,input);
       db.prepare('UPDATE installations SET data=? WHERE id=?').run(JSON.stringify(device),device.id);
+      referenceRates.seed(pricingAccounts());
+      referenceRates.refreshFromCatalog(platformPrices.latest(),pricingAccounts(),pricingFacts,pricingMonthlyCredits);
       db.exec('COMMIT');
-      return {accepted:true,accounts:accountCount,transactions:transactionCount,teams:teamCount,operations:operationCount};
+      return {accepted:true,accounts:accountCount,transactions:transactionCount,teams:teamCount,operations:operationCount,
+        creditHistoryFacts:factCount,rejectedCreditHistoryFacts:input.rejectedFacts??0,
+        subscriptionFacts:subscriptionFactCount,rejectedSubscriptionFacts:input.rejectedSubscriptionFacts??0,
+        creditSourceFacts:creditSourceFactCount,rejectedCreditSourceFacts:input.rejectedCreditSourceFacts??0};
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  function bindInitialIdentity(device,input) {
-    if(device.initialIdentityBinding?.status!=='pending'||input.status!=='ok')return;
+  function recordLogins(device,input) {
     // Login identity is independent of credit-service availability. Older
     // collectors supply only personal/member snapshots; never infer a login
     // from a team total, roster member or charged history identity.
@@ -414,27 +547,11 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
       Date.parse(account.lastSyncedAt)>=Date.parse(device.createdAt)-300_000
     );
     if(input.loginIdentity&&teamIds.has(input.loginIdentity.platformUserId))fail('团队空间 ID 不能作为登录身份',409);
-    const candidates = input.loginIdentity
-      ? Date.parse(input.observedAt)>=Date.parse(device.createdAt)-300_000?[input.loginIdentity.platformUserId]:[]
-      : [...new Set(eligibleAccounts.map(account=>account.platformUserId))];
-    if(!candidates.length)return;
-    const decision = {...bindingState('pending',device.employeeId),observedAt:input.observedAt,decidedAt:now()};
-    if(candidates.length!==1){device.initialIdentityBinding={...decision,status:'ambiguous'};return;}
-    decision.platformUserId=candidates[0];
-    decision.displayName=input.loginIdentity?.displayName??eligibleAccounts.find(account=>account.platformUserId===decision.platformUserId)?.displayName??null;
-    if(!device.employeeId){device.initialIdentityBinding={...decision,status:'unassigned'};return;}
-    const mapping=db.prepare('SELECT employee_id FROM identity_mappings WHERE platform_user_id=?').get(decision.platformUserId);
-    if(mapping?.employee_id&&mapping.employee_id!==device.employeeId){
-      device.initialIdentityBinding={...decision,status:'conflict'};return;
-    }
-    if(!mapping?.employee_id){
-      const employee=directory.employee(device.employeeId);
-      db.prepare(`INSERT INTO identity_mappings(platform_user_id,real_name,department,updated_at,employee_id,department_id) VALUES(?,?,?,?,?,NULL)
-        ON CONFLICT(platform_user_id) DO UPDATE SET real_name=excluded.real_name,department=excluded.department,updated_at=excluded.updated_at,employee_id=excluded.employee_id,department_id=NULL`)
-        .run(decision.platformUserId,employee.name,employee.department,decision.decidedAt,employee.id);
-      ownershipHistory.record(decision.platformUserId);
-    }
-    device.initialIdentityBinding={...decision,status:'bound'};
+    const candidates = input.loginIdentity ? [input.loginIdentity] : input.status==='ok' ? eligibleAccounts : [];
+    for(const login of candidates)accountUsage.record(device.id,device.employeeId,login.platformUserId,login.displayName,input.observedAt);
+    for(const fact of input.creditHistoryFacts??[])accountUsage.record(device.id,device.employeeId,fact.context.loginUserId,null,fact.context.readAt);
+    for(const fact of [...(input.subscriptionFacts??[]),...(input.creditSourceFacts??[])])accountUsage.record(device.id,device.employeeId,fact.loginUserId,null,fact.readAt);
+    for(const event of input.operationEvidence??[])accountUsage.record(device.id,device.employeeId,event.userId,null,event.occurredAt);
   }
   let transactionCache = null;
   let ownershipProjection = null;
@@ -450,10 +567,12 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
     // Heartbeats, diagnostic logs and directory edits do not change historical
     // rows. Reuse the complete parsed/sorted ledger until its actual data changes.
     if (!transactionCache || transactionCache.revision !== revision || transactionCache.accountScopes !== accountScopes) {
+      const expirySources = expirySourceIndex(db.prepare("SELECT query_scope,login_user_id,team_id,payload FROM credit_source_facts WHERE source='user_credit_history'").all());
       const transactions = db.prepare('SELECT * FROM transactions').all().map(row=>{
         const transaction = {...JSON.parse(row.data),accountId:row.account_id}, account = accountsById.get(row.account_id);
         // A platform team ID in the user field is not a charged member identity.
         if (account && ['team_total','team_member'].includes(account.scope) && transaction.chargedPlatformUserId === account.spaceId) transaction.chargedPlatformUserId = null;
+        if (transaction.kind === 'expire') transaction.expiryCreditKind = expiryCreditKind(transaction, account, expirySources);
         return Object.freeze(transaction);
       }).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)||a.id.localeCompare(b.id));
       transactionCache = {revision,accountScopes,transactions:Object.freeze(transactions)};
@@ -492,6 +611,7 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
       people.set(platformUserId,previous);
     };
     for (const account of accounts) if (account.scope !== 'team_total') observe(account.platformUserId,account.displayName,account.lastSyncedAt,account.scope === 'personal' ? 2 : 1,accountSnapshotIds.has(account.id)?'login_account':null);
+    for (const usage of accountUsage.list()) observe(usage.platformUserId,usage.nickname,usage.lastSeenAt,2,'login_account');
     for (const row of db.prepare("SELECT data FROM installations WHERE json_extract(data,'$.initialIdentityBinding.platformUserId') IS NOT NULL").all()) {
       const binding=JSON.parse(row.data).initialIdentityBinding;
       observe(binding.platformUserId,binding.displayName,binding.observedAt??'',2,'login_account');
@@ -622,9 +742,13 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
     }
     for (const device of installations) {
       if(device.enabled)expires(device.lastCommandPollAt,COMMAND_ONLINE_MS);
-      if(device.status==='ok')expires(device.lastSeenAt,24*3600_000);
+      if(device.lastSeenAt)expires(device.lastSeenAt,24*3600_000);
     }
-    return {mode:'live',asOf:now(),accounts:data.accounts,teams:data.teams,transactions:data.transactions,departments:directory.departments(),employees:directory.employees(),identities:identityDirectory(data),installations};
+    const pendingEnrollment = enrollment.pendingSummary();
+    deadline(Date.parse(pendingEnrollment.nextExpiresAt));
+    const catalog=platformPrices.latest();
+    return {mode:'live',asOf:now(),accounts:data.accounts,teams:data.teams,teamManagement:teamManagement.list(),transactions:data.transactions,departments:directory.departments(),employees:directory.employees(),identities:identityDirectory(data),installations,accountUsage:accountUsage.list(),
+      pendingEnrollmentCount:pendingEnrollment.count,referenceRates:referenceRates.list(),platformPriceCatalog:catalog ? {version:catalog.version,observedAt:catalog.observedAt,lastObservedAt:catalog.lastObservedAt,products:catalog.products.length} : null};
   }
   function recordDiagnostics(installation,logs) {
     requireActiveInstallation(installation.id);
@@ -658,5 +782,5 @@ export function createStore({ dataDir, secret, clock = Date.now }) {
     db.prepare(`INSERT INTO admin_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run('collector_release',JSON.stringify(announcement));
     return announcement;
   };
-  return {...directory,patchEmployee,patchDepartment,createInstallation,patchInstallation,skipInitialBinding,deleteInstallation,getInstallation,authenticate,installationToken,getAccount,patchAccount,patchIdentity,createSyncRequest,getSyncRequest,pollCommands,recordCommandResult,ingest,dashboard,dashboardVersion,recordDiagnostics,diagnostics,getAdminPasswordRecord,setAdminPasswordRecord,getReleaseAnnouncement,announceRelease,close:()=>db.close()};
+  return {...directory,...enrollment,setTeamArchived:teamManagement.setArchived,setReferenceRate,setPlatformPrices,getPlatformPrices:platformPrices.latest,patchEmployee,patchDepartment,createInstallation,patchInstallation,skipInitialBinding,deleteInstallation,getInstallation,authenticate,installationToken,getAccount,patchAccount,patchIdentity,createSyncRequest,getSyncRequest,pollCommands,recordCommandResult,ingest,dashboard,dashboardVersion,recordDiagnostics,diagnostics,getAdminPasswordRecord,setAdminPasswordRecord,getReleaseAnnouncement,announceRelease,close:()=>db.close()};
 }

@@ -22,5 +22,9 @@ test('page watcher debounces real balance/account changes and ignores unchanged 
     credit.localCredit=100;creditCallback();flush();assert.equal(signals.length,3);
     accountKey='team:2';userId='u2';accountCallback();flush();assert.equal(signals.length,4);
     assert.deepEqual(signals[3],{source:'jimeng-credit-manager',type:'credit-change'});
+    credit.isLocalCreditReady=true;interval();flush();assert.equal(signals.length,5);
+    const feature=window.__debugger.DreaminaCommercialFeatureService;
+    feature.commercialCreditService={...credit};interval();flush();assert.equal(signals.length,6);
+    interval();flush();assert.equal(signals.length,6);
   }finally{globalThis.window=old;}
 });

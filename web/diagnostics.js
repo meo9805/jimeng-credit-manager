@@ -1,4 +1,13 @@
 const EVENTS = {
+  page_not_ready: ['即梦页面服务未就绪', 'warning'],
+  page_login_required: ['即梦登录已失效', 'warning'],
+  account_context_changed: ['账号切换，重新读取中', 'warning'],
+  credit_api_unavailable: ['积分读取接口暂不可用', 'error'],
+  credit_balance_unavailable: ['余额接口未返回有效数据', 'warning'],
+  credit_history_partial: ['部分积分流水未读取', 'warning'],
+  team_discovery_partial: ['部分团队暂未读取成功', 'warning'],
+  account_read_recovered: ['账号读取已自动恢复', 'success'],
+  source_capture_partial: ['平台资料超过采集上限', 'warning'],
   collector_started: ['采集器已启动', 'neutral'],
   collection_started: ['开始读取即梦数据', 'neutral'],
   collection_completed: ['数据采集完成', 'success'],
@@ -12,7 +21,8 @@ const EVENTS = {
   command_failed: ['同步任务执行失败', 'error'],
   operation_saved: ['操作凭证已保存', 'neutral'],
   operation_uploaded: ['操作凭证已上报', 'success'],
-  operation_upload_failed: ['操作凭证待补传', 'warning'],
+  operation_upload_failed: ['操作凭证上报失败', 'warning'],
+  operation_rejected: ['操作凭证被拒收，已保留本机', 'error'],
   operation_save_failed: ['操作凭证暂未保存', 'error'],
   operation_queue_full: ['操作凭证队列已满', 'error'],
   operation_bridge_full: ['页面操作凭证积压，部分凭证未保存', 'error'],
@@ -20,15 +30,37 @@ const EVENTS = {
 const timestamp = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 const count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
 
+const COLLECTOR_MESSAGES = {
+  '等待打开即梦；已同步的数据仍保留': '尚未打开即梦',
+  '等待打开即梦': '尚未打开即梦',
+  '等待登录即梦': '尚未登录即梦',
+  '账号切换中，等待重新读取': '账号切换中，正在重新识别',
+  '账号切换中，等待积分加载': '账号已切换，积分尚未读取',
+  '部分积分流水待补齐': '部分积分流水尚未获取',
+  '部分资料或历史流水仍待补齐': '部分资料或历史流水尚未获取',
+  '操作凭证待补传': '操作凭证尚未上报',
+  '离线队列已满，待连接恢复后继续补齐': '离线队列已满，恢复连接后继续采集',
+  '离线队列已满，等待已有记录上传后继续采集': '离线队列已满，已有记录上传后继续采集',
+  '管理服务暂不可用，记录已在本机排队等待重试': '服务连接失败，正在重试',
+};
+
+/** Presentation only: older collectors retain their original status and message. */
+export function collectorMessage(message) {
+  if (typeof message !== 'string') return '';
+  if (Object.hasOwn(COLLECTOR_MESSAGES, message)) return COLLECTOR_MESSAGES[message];
+  const partial = /^(已同步 \d+ 个页面；)部分资料或历史流水仍待补齐$/.exec(message);
+  return partial ? `${partial[1]}部分资料或历史流水尚未获取` : message;
+}
+
 /** Display a fixed event vocabulary and numeric facts; never forward raw error payloads. */
 export function diagnosticEntries(logs = []) {
   return logs.filter((log) => log && typeof log === 'object').map((log, index) => {
     const [label, severity] = typeof log.code === 'string' && Object.hasOwn(EVENTS, log.code) ? EVENTS[log.code] : ['其他采集事件', 'neutral'];
     const facts = [];
     if (Number.isInteger(log.httpStatus) && log.httpStatus >= 100 && log.httpStatus <= 599) facts.push(`HTTP ${log.httpStatus}`);
-    for (const [key, title] of [['readTabs', '已读页面'], ['skippedTabs', '跳过页面'], ['pendingCount', '待上传记录']]) {
+    for (const [key, title] of [['readTabs', '已读页面'], ['skippedTabs', '跳过页面'], ['pendingCount', '未上报记录']]) {
       const value = count(log[key]);
-      if (value !== null) facts.push(`${key === 'pendingCount' && log.code === 'operation_uploaded' ? '本次上报凭证' : title} ${value}`);
+      if (value !== null) facts.push(`${key === 'pendingCount' && log.code === 'operation_uploaded' ? '本次上报凭证' : key === 'pendingCount' && log.code === 'operation_rejected' ? '本机隔离凭证' : title} ${value}`);
     }
     if (typeof log.extensionVersion === 'string' && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(log.extensionVersion) && log.extensionVersion.length <= 40) facts.push(`插件 ${log.extensionVersion}`);
     return { key: typeof log.id === 'string' ? log.id : String(index), at: timestamp(log.at), label, severity, facts };
